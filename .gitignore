@@ -1,0 +1,5 @@
+/data/
+/bin/
+*.test
+.env
+deploy/docker/certs/

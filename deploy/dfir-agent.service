@@ -1,0 +1,18 @@
+[Unit]
+Description=DFIR evidence collection agent (lab)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Lab agent needs access to Apache logs and uploads. Restrict permissions before production use.
+User=root
+EnvironmentFile=/etc/dfir-agent.env
+ExecStart=/usr/local/bin/dfir-agent -server http://127.0.0.1:8080 -host-id lab-ubuntu -uploads /var/www/html/uploads
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

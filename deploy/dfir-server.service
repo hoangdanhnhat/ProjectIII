@@ -1,0 +1,18 @@
+[Unit]
+Description=DFIR evidence coordination server (lab)
+After=network.target
+
+[Service]
+Type=simple
+User=dfir-server
+Group=dfir-server
+StateDirectory=dfir-server
+EnvironmentFile=/etc/dfir-server.env
+ExecStart=/usr/local/bin/dfir-server -listen 127.0.0.1:8080 -host-id lab-ubuntu -data /var/lib/dfir-server
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

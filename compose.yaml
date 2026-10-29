@@ -1,0 +1,58 @@
+# DFIR/CA evidence collector - Docker lab.
+#
+# Tokens come from .env (created by gen-env.sh, gitignored; `make lab-up`
+# runs gen-env.sh automatically). Substitution is soft on purpose so that
+# `docker compose down/ps/logs` also work before .env exists; starting the
+# server with empty tokens fails fast with its own error message.
+#
+# dfir-server  coordination server, plain HTTP on 0.0.0.0:8080 (console published)
+# web          monitored Linux web host (Ubuntu + Apache2 + agent) - OPT-IN via
+#              the "web" profile (make lab-up-web). It shares the server's one
+#              host ID, so it must not run while a Windows agent polls: jobs
+#              would be claimed by whichever agent polls first and Windows-only
+#              scenarios would come back "skipped ... not implemented on linux".
+#              Linux collection support is planned for a later phase.
+#
+# The web container receives only DFIR_AGENT_TOKEN - the operator token never
+# enters the monitored host.
+#
+# Plain HTTP is a lab-only choice: tokens and evidence are not encrypted on
+# the wire. HTTPS support still exists in both binaries (-tls-cert/-tls-key,
+# -tls-ca) and can be wired in later without code changes.
+
+name: dfir-lab
+
+services:
+  dfir-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: server
+    environment:
+      DFIR_OPERATOR_TOKEN: ${DFIR_OPERATOR_TOKEN}
+      DFIR_AGENT_TOKEN: ${DFIR_AGENT_TOKEN}
+    command:
+      - -listen
+      - 0.0.0.0:8080
+      - -data
+      - /data
+      - -host-id
+      - lab-ubuntu
+    ports:
+      - "${DFIR_CONSOLE_PORT:-8080}:8080"
+    volumes:
+      - ./data:/data
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+    profiles:
+      - web
+    environment:
+      DFIR_AGENT_TOKEN: ${DFIR_AGENT_TOKEN}
+    depends_on:
+      - dfir-server
+    ports:
+      - "${WEB_PORT:-8081}:80"

@@ -1,0 +1,1 @@
+This is the scenario when investigator want to collect network connection information on target hosts.

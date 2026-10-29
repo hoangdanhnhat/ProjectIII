@@ -1,0 +1,6 @@
+.git
+.env
+data/
+bin/
+deploy/docker/certs/
+*.test
