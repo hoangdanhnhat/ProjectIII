@@ -1,78 +1,68 @@
-# DFIR/CA evidence collector — Linux lab prototype
+# DFIR/CA evidence collector — server + Windows agent
 
-Prototype gồm server điều phối và agent Linux viết bằng Go. Phạm vi hiện tại: **một host Ubuntu/Apache2**, kịch bản `webshell.v1`. Agent kiểm tra file cấu hình web server (Apache trên Linux, IIS trên Windows), đọc **đường dẫn upload cấu hình tường minh** (mặc định `/var/www/html/uploads` trên Linux, không có mặc định trên Windows) và gửi các file có phần mở rộng script (`.php`, `.phtml`, `.phar`, `.cgi`, `.pl`, `.py`, `.sh`, `.jsp`, `.aspx`). Nếu job có `since`, agent thu thập thêm file mới sửa đổi kể từ thời điểm đó. Agent thu thập snapshot `access.log` và `error.log` nếu truy cập được. Kết quả là **dữ liệu để điều tra**, không phải khẳng định webshell đã được phát hiện.
+Prototype consisting of an orchestrating server and a **Windows agent**, both written in Go. The server runs in Docker on a Linux machine (or anywhere Go builds); the agent runs on the Windows endpoint being monitored and connects **outbound only** — it never listens for inbound connections. Current scope: Windows 10/11 64-bit endpoints, scenarios `netstat.v1`, `eventlog.v1` and `webshell.v1`.
 
-## Chạy thử trên một máy
+For `webshell.v1` the agent checks the web server configuration file (IIS `applicationHost.config`) to confirm the host is a web server, reads the **explicitly configured upload directory** (IIS has no standard upload directory, so there is no default on Windows — without `-uploads` the job returns `needs_configuration` instead of scanning the drive) and collects files with script extensions (`.php`, `.phtml`, `.phar`, `.cgi`, `.pl`, `.py`, `.sh`, `.jsp`, `.aspx`). If the job carries a `since` timestamp, the agent also collects files modified after that moment, and it snapshots the newest IIS logs. The result is **data for an investigation**, not an assertion that a webshell was detected.
 
-Yêu cầu: Go >= 1.24, Ubuntu có Apache2. Chỉ dùng dữ liệu lab được phép thu thập. Apache **không có upload directory mặc định**: ví dụ dưới đây tạo `/var/www/html/uploads` cho lab; nếu ứng dụng dùng chỗ khác, thay `-uploads` bằng đường dẫn thật. Không cần cài PostgreSQL trong bản prototype một host.
+## What the agent collects on Windows
 
-```bash
-go test ./...
-go build -o bin/dfir-server ./cmd/dfir-server
-go build -o bin/dfir-agent ./cmd/dfir-agent
-sudo install -d -m 0750 /var/www/html/uploads
-printf 'DFIR lab fixture — not executable PHP\n' | sudo tee /var/www/html/uploads/fixture.php >/dev/null
-```
+| Scenario | Artifact kinds | What it is |
+| --- | --- | --- |
+| `netstat.v1` | `netstat_snapshot` | TCP/UDP connection table with owning process, JSON |
+| `eventlog.v1` | `event_log` | Windows event log channels as schema-versioned JSON (one artifact per channel) |
+| `webshell.v1` | `upload`, `iis_log` | Script-extension files from the configured upload directory + snapshots of the newest IIS logs |
 
-Trong **terminal 1**, đặt hai token **khác nhau, ngẫu nhiên**, rồi chạy server. Trong **terminal 2**, chạy agent với cùng agent token (trong thực tế không ghi token vào history hoặc repo; dùng environment file bảo vệ quyền đọc):
+## Quick start: Docker server + Windows agent
 
-```bash
-# terminal 1
-export DFIR_OPERATOR_TOKEN="$(openssl rand -hex 32)"
-export DFIR_AGENT_TOKEN="$(openssl rand -hex 32)"
-./bin/dfir-server -data ./data -host-id lab-ubuntu
-
-# terminal 2: thay <agent-token> bằng giá trị DFIR_AGENT_TOKEN của terminal 1
-sudo env DFIR_AGENT_TOKEN='<agent-token>' ./bin/dfir-agent \
-  -server http://127.0.0.1:8080 -host-id lab-ubuntu \
-  -uploads /var/www/html/uploads
-
-# terminal 3: thay <operator-token> bằng giá trị DFIR_OPERATOR_TOKEN của terminal 1
-curl -sS -X POST http://127.0.0.1:8080/v1/jobs \
-  -H 'Authorization: Bearer <operator-token>' -H 'Content-Type: application/json' \
-  -d '{"host_id":"lab-ubuntu","scenario":"webshell.v1"}'
-```
-
-Lấy `id` từ response; kiểm tra kết quả và danh sách artifact:
-
-```bash
-curl -sS http://127.0.0.1:8080/v1/jobs/<job-id> \
-  -H 'Authorization: Bearer <operator-token>'
-curl -sS http://127.0.0.1:8080/v1/jobs/<job-id>/artifacts/<artifact-id> \
-  -H 'Authorization: Bearer <operator-token>' -o evidence.bin
-sha256sum evidence.bin  # so với sha256 trong job JSON
-```
-
-Nếu không dùng thư mục lab dưới document root hoặc muốn chạy test không cần Apache thật, có thể trỏ `-uploads` và `-web-config` tới fixture nằm trong thư mục thử nghiệm. `-web-logs ''` để bỏ qua log khi thử nghiệm. Không đưa fixture chứa mã độc vào web root có thể truy cập từ ngoài.
-
-## Lab Docker (không cần cài Apache trên máy) / Docker lab (no Apache on the host)
-
-**EN** — Run the lab in Docker: by default only the `dfir-server` container (plain HTTP for now, TLS deferred); the collector agent runs on a Windows host and polls outbound (see `deploy/docker/README.md` §4). The monitored Linux `web` container is opt-in via `make lab-up-web`. Evidence lands in `./data/`.
+Requirements: a Linux machine with Docker + compose v2, `openssl` and `make`; a Windows 10/11 64-bit machine with PowerShell (Administrator for `eventlog.v1` with the `Security` channel); both on the same trusted network (the lab currently runs plain HTTP, see the security notes below).
 
 ```bash
 make lab-init                          # once: random tokens in .env (gitignored)
 make lab-up                            # build + start the server only
-make lab-job SCENARIO=netstat.v1       # run a job against the Windows agent
-# optional full lab with the monitored Linux web host:
-make lab-up-web && make lab-traffic && make lab-job
 ```
 
-Console: `http://localhost:8080/`. Port conflicts: set `DFIR_CONSOLE_PORT`/`WEB_PORT` in `.env`. Full lab setup guide (Vietnamese): `deploy/docker/README.md`. Teardown: `make lab-down`; full reset: `make lab-clean`.
+Build the Windows agent — cross-compile from the Linux machine (the Go 1.24 container handles the toolchain; `chown` keeps ownership because the container runs as root):
 
-**VN** — Lab chạy trong Docker: mặc định chỉ có container `dfir-server` (HTTP thường, TLS để sau); agent thu thập chạy trên máy Windows và chỉ kết nối đi ra (xem `deploy/docker/README.md` mục 4). Container `web` Linux bị theo dõi là tùy chọn qua `make lab-up-web`. Bằng chứng nằm trong `./data/`. Các lệnh như trên; hướng dẫn dựng lab đầy đủ tại `deploy/docker/README.md`.
+```bash
+docker run --rm -v "$PWD:/src" -w /src golang:1.24 sh -c \
+  "go build -trimpath -o /src/bin/dfir-agent-windows.exe ./cmd/dfir-agent && chown $(id -u):$(id -g) /src/bin/dfir-agent-windows.exe"
+sha256sum bin/dfir-agent-windows.exe  # record this hash
+```
 
-## Web console
+Copy `bin/dfir-agent-windows.exe` to the Windows machine (SMB, RDP, scp, or a LAN file server) and run it there with the agent token from `.env`:
 
-Mở `http://127.0.0.1:8080/` (hoặc URL của server) và đăng nhập bằng `DFIR_OPERATOR_TOKEN`:
+```powershell
+$env:DFIR_AGENT_TOKEN = '<DFIR_AGENT_TOKEN from .env>'
+C:\dfir\dfir-agent.exe `
+  -server http://<linux-ip>:8080 `
+  -host-id lab-ubuntu `
+  -interval 5s
+```
 
-- Xem danh sách collection, trạng thái, thời lượng và số artifact; tự động cập nhật mỗi 5 giây.
-- Tạo job mới (`host_id`, `webshell.v1`, tùy chọn `since`), mở chi tiết job và tải bằng chứng kèm SHA-256.
-- Token chỉ được giữ trong `sessionStorage` của tab hiện tại; mọi lời gọi API vẫn dùng Bearer token. Giao diện không có build step và được nhúng trong binary server bằng `go:embed`, nên chỉ cần build lại server sau khi sửa asset.
-- Console dùng thêm hai endpoint chỉ dành cho operator: `GET /v1/jobs` (danh sách, mới nhất trước) và `GET /v1/meta` (host/scenario được phép).
+`-host-id` must match the host ID the server authorizes (default `lab-ubuntu` in this lab; the server rejects every other ID). The agent is silent while idle (no job = HTTP 204, nothing printed).
 
-## Windows agent
+Create a job from the Linux machine and wait for the result:
 
-Cùng một chương trình `cmd/dfir-agent` build được cho cả Linux và Windows; không có agent Windows riêng.
+```bash
+make lab-job SCENARIO=netstat.v1     # expect: completed, 1 artifact netstat_snapshot
+make lab-job SCENARIO=eventlog.v1    # expect: completed, 1 artifact event_log per channel
+```
+
+Verify the evidence:
+
+```bash
+make lab-status                       # list jobs, newest first
+set -a; . ./.env; set +a
+curl -sS -H "Authorization: Bearer $DFIR_OPERATOR_TOKEN" \
+  http://localhost:8080/v1/jobs/<job-id>/artifacts/<artifact-id> -o evidence.bin
+sha256sum evidence.bin                # must match "sha256" in the job JSON
+```
+
+Console: `http://localhost:8080/` (log in with `DFIR_OPERATOR_TOKEN` from `.env`). Port conflicts: set `DFIR_CONSOLE_PORT` / `WEB_PORT` in `.env` and re-run `make lab-up`. Teardown: `make lab-down`; full reset (also deletes `data/` and `.env`): `make lab-clean`. The full lab guide, including verified Windows-agent steps and troubleshooting, is in `deploy/docker/README.md` (§4).
+
+## Running the Windows agent
+
+The same `cmd/dfir-agent` source builds for Windows; there is no separate Windows agent program. Build **amd64** even on 64-bit Windows — a 32-bit process sees `System32` through WOW64 redirection and would read the wrong IIS configuration and logs. Requires Go 1.24+ (the secure file helper uses `os.Root`).
 
 ```powershell
 $env:GOOS = "windows"; $env:GOARCH = "amd64"
@@ -84,24 +74,41 @@ $env:DFIR_AGENT_TOKEN = '<agent-token>'
   -web-logs 'C:\inetpub\logs\LogFiles\W3SVC*\*.log'
 ```
 
-- `-uploads` **không có mặc định trên Windows** (IIS không có thư mục upload chuẩn). Nếu bỏ trống, job trả `needs_configuration` thay vì quét ổ đĩa.
-- `-web-logs` nhận danh sách path hoặc glob pattern, cách nhau bằng dấu phẩy; tối đa 4 file mới nhất được gửi (server giới hạn 260 artifact/job = 256 upload + 4 log). Log IIS dùng kind `iis_log`, log Apache dùng `apache_log`. Server phải được build lại để chấp nhận `iis_log`; nếu chưa thể cập nhật server, chạy agent với `-web-logs ''` để chỉ thu thập file (nếu không, upload log bị 400 và job sẽ được thử lại mãi).
-- `-apache-config` / `-apache-logs` vẫn được chấp nhận như alias của `-web-config` / `-web-logs`.
-- Symlink, junction và reparse point bị từ chối ở mọi thành phần đường dẫn. Trên Windows agent dùng `os.Root` + `Lstat` từng thành phần; khác với `O_NOFOLLOW` trên Linux, cặp kiểm tra/mở không nguyên tử nên một thay thế cùng volume trong khe thời gian race chưa được chặn tuyệt đối.
-- Cài đặt service và câu hỏi có cần server riêng cho Windows: xem `deploy/windows.md` (TLS sẽ bổ sung sau; lab hiện chạy HTTP).
+Flags and behavior:
 
-## Luồng và định dạng
+- `-uploads` **has no default on Windows** (IIS has no standard upload directory). If omitted or not an existing directory, a `webshell.v1` job returns `needs_configuration` instead of scanning the drive; the other scenarios are unaffected.
+- `-web-config` defaults to `applicationHost.config` under `%SystemRoot%\System32\inetsrv\config`. It is used for role detection: without IIS the agent reports `skipped` by design. `-web-logs` defaults to the IIS log root (`%SystemDrive%\inetpub\logs\LogFiles\W3SVC*\*.log`).
+- `-web-logs` accepts comma-separated paths or glob patterns; globs are expanded and only the **four newest** matches are uploaded (kind `iis_log`), so the server limit of 260 artifacts/job (256 uploads + 4 logs) is never exceeded. The current server accepts the `iis_log` kind; a server binary from before IIS support rejects it with HTTP 400, which the agent treats as a transport failure and retries forever — run the agent with `-web-logs ''` (files only) until the server is rebuilt.
+- `-eventlog-channels` defaults to `System,Application`; add `Security` for a domain controller / incident value, which requires running as Administrator.
+- `-apache-config` / `-apache-logs` are still accepted as aliases of `-web-config` / `-web-logs`.
+- The agent reads the config and logs with the account it runs as; to read `applicationHost.config` and all site logs, run it as `LocalSystem` (or grant explicit read ACLs).
+- Symlinks, junctions and other reparse points are rejected in every path component. On Windows the agent uses `os.Root` + `Lstat` per component; unlike `O_NOFOLLOW` on Linux, the check/open pair is not atomic, so a same-volume replacement in the race window is not fully prevented.
+- It collects only files under the configured upload directory plus the configured log paths — it never scans a whole drive.
+- One server instance authorizes exactly **one** `-host-id` and **one** agent token. To collect from several Windows machines at once, run additional server instances with different `-listen`, `-data` and `-host-id` values (per-host registry and per-agent credentials are not implemented).
+- Installing the agent as a long-running service (NSSM/WinSW), and whether a separate server build is needed on Windows: see `deploy/windows.md` (TLS is deferred; the lab currently runs HTTP).
 
-1. Operator tạo job trên `POST /v1/jobs` bằng token riêng; server chỉ nhận host ID đã cấu hình và kịch bản `webshell.v1` (tùy chọn `since` theo RFC3339, ví dụ `2026-10-24T00:00:00Z`).
-2. Agent polling outbound qua `GET /v1/agent/jobs/next`, báo `skipped` nếu thiếu cấu hình web server, `needs_configuration` nếu chưa có thư mục upload, không tự quét toàn bộ host.
-3. Agent đọc file từ đường dẫn được chỉ định (không theo symlink), so sánh metadata trước/sau khi đọc, tính SHA-256 của đúng byte gửi đi, rồi tải bằng chứng và metadata lên server. Server kiểm tra kích thước/hash, lưu `data/artifacts/<job-id>/<artifact-id>` và manifest `data/jobs/<job-id>.json`.
-4. Agent gửi kết quả `completed`, `partial` hoặc `failed` và lý do. Job đang `running` có thể được agent thử lại sau khi khởi động lại; upload trùng ID/hash được xử lý idempotent. `data/audit.jsonl` ghi sự kiện tạo job, xem job, nhận artifact, hoàn thành và tải về. API download kiểm chứng hash trước khi trả byte.
+## Web console
 
-Giới hạn lab: tối đa 10 MiB/file, 256 file từ upload directory/job (vượt giới hạn được ghi nhận là lỗi `partial`) và 4 log mới nhất/job (log cũ hơn bị bỏ và ghi chú trong `reason`, không tính là lỗi); các file quá 10 MiB được ghi nhận là lỗi `partial`. Log được chụp toàn bộ nếu <= 10 MiB; **chưa có cắt log theo `since`**. Dữ liệu trong hệ thống đang chạy có thể thay đổi trước/sau khi thu thập; manifest mô tả snapshot đã nhận, không chứng minh trạng thái nguồn ở thời điểm trước đó.
+Open `http://127.0.0.1:8080/` (or the server URL) and log in with `DFIR_OPERATOR_TOKEN`:
 
-## Bảo mật và giới hạn chưa triển khai
+- View the collection list with status, duration and artifact count; refreshes automatically every 5 seconds.
+- Create new jobs (`host_id`, scenario, optional `since`), open job details and download evidence with its SHA-256.
+- The token is kept only in the current tab's `sessionStorage`; every API call still uses the Bearer token. The UI has no build step and is embedded into the server binary via `go:embed`, so only the server needs rebuilding after asset changes.
+- The console also uses two operator-only endpoints: `GET /v1/jobs` (list, newest first) and `GET /v1/meta` (authorized hosts/scenarios).
 
-- Lab hiện chạy **HTTP không TLS** (giai đoạn phát triển): token Bearer và bằng chứng truyền dạng rõ trên mạng. Chỉ dùng trong mạng lab tin cậy; không mở cổng ra Internet. Hai binary vẫn hỗ trợ TLS (`-tls-cert`/`-tls-key` ở server, `-tls-ca` ở agent) để bật lại sau mà không cần sửa code. Không đặt token trong mã nguồn, tài liệu cấu hình được commit, hay URL.
-- Server có một operator token và một agent token, **chưa có RBAC/nhiều người dùng, đăng ký/thu hồi danh tính agent, mã hóa at rest, chứng thư client, xác thực riêng từng điều tra viên, hay chữ ký bất biến cho manifest/audit log**. Dùng máy lab cô lập; chưa phù hợp làm quy trình chain of custody pháp lý hoàn chỉnh.
-- Agent chạy quyền cao để đọc log như đã chọn cho lab. Không gửi shell command từ server; server không thể chỉ định đường dẫn thu thập qua job. Agent bỏ qua symlink (và junction/reparse point trên Windows); chưa tự khám phá vị trí upload, chưa hỗ trợ Nginx. Windows hiện chỉ hỗ trợ thu thập file IIS + log; chưa có Event Log, systemd/Windows service hay process injection.
-- Các mẫu trong `deploy/` chỉ là template cho cùng host (systemd cho Linux, `windows.md` cho Windows); cần cài binary, tạo user `dfir-server`, đặt file token tại `/etc/dfir-server.env` và `/etc/dfir-agent.env` với quyền `0600`, chỉnh endpoint/đường dẫn (và bật lại TLS khi cần) cho môi trường thực tế. Không tự động cài đặt lên máy người dùng.
+## Flow and data format
+
+1. The operator creates a job via `POST /v1/jobs` with the operator token; the server accepts only the configured host ID and catalog scenarios, with optional `since` in RFC3339 (e.g. `2026-10-24T00:00:00Z`).
+2. The agent polls outbound via `GET /v1/agent/jobs/next` every `-interval` (default 5s), reports `skipped` when the host is not a web server and `needs_configuration` when the upload directory is missing, and never scans the whole host.
+3. The agent reads files only from the configured paths (no symlinks), compares metadata before/after reading, computes SHA-256 over the exact bytes sent, then uploads evidence and metadata. The server verifies size and hash, stores `data/artifacts/<job-id>/<artifact-id>` and the manifest `data/jobs/<job-id>.json`.
+4. The agent reports `completed`, `partial` or `failed` with a reason. A `running` job is retried by the agent after a restart; uploads with a known ID/hash are handled idempotently. `data/audit.jsonl` records job creation, viewing, artifact receipt, completion and downloads. The download API re-verifies the hash before serving any bytes.
+
+Lab limits: at most 10 MiB per file, 256 files per job from the upload directory and 4 newest logs per job (260 artifacts total; older logs are dropped and noted in `reason`, which does not count as an error; exceeding the file limits is recorded as `partial`). Logs are captured whole when ≤ 10 MiB; **there is no `since`-based log tailoring yet**. Data on a running system may change before or after collection; the manifest describes the snapshot received and does not prove the state of the source at any earlier moment.
+
+## Security and unimplemented features
+
+- The lab currently runs **HTTP without TLS** (development phase): Bearer tokens and evidence travel in cleartext. Use it only on a trusted lab network and never expose the port to the Internet. Both binaries still support TLS (`-tls-cert`/`-tls-key` on the server, `-tls-ca` on the agent) to re-enable it later without code changes. Never put tokens in source code, committed configuration files or URLs.
+- The server has one operator token and one agent token: **no RBAC/multiple users, agent identity enrollment or revocation, at-rest encryption, client certificates, per-investigator authentication, or tamper-evident signatures for manifests/audit logs**. Use an isolated lab machine; this is not yet a legally complete chain-of-custody process.
+- The agent runs elevated to read the chosen logs. The server sends no shell commands and cannot specify collection paths through a job. Symlinks (and junctions/reparse points on Windows) are skipped; upload locations are never auto-discovered; Nginx is not supported.
+- On Windows the agent currently implements `netstat.v1`, `eventlog.v1` and `webshell.v1` (IIS); scenarios such as `services.v1`/`autoruns.v1` and process-injection detection are not implemented.
+- `deploy/` contains templates only: systemd units for the Linux server and `deploy/windows.md` for the Windows agent service. For a real deployment you must install the binary, create a dedicated user, place token files with `0600` permissions (e.g. `/etc/dfir-server.env`), adjust endpoints/paths and re-enable TLS. Nothing is auto-installed on end-user machines.
