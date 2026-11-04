@@ -8,3 +8,6 @@ deploy/docker/certs/
 web/node_modules/
 internal/webui/dist/*
 !internal/webui/dist/.embed
+
+# TypeScript incremental build info
+*.tsbuildinfo
