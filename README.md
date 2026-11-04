@@ -2,6 +2,8 @@
 
 Prototype consisting of an orchestrating server and a **Windows agent**, both written in Go. The server runs in Docker on a Linux machine (or anywhere Go builds); the agent runs on the Windows endpoint being monitored and connects **outbound only** — it never listens for inbound connections. Current scope: Windows 10/11 64-bit endpoints, scenarios `netstat.v1`, `eventlog.v1` and `webshell.v1`, plus automated **Threat Intelligence triage** of network connections via VirusTotal.
 
+> **Setting this up from scratch?** Follow the step-by-step guide in [SETUP.md](SETUP.md) — server, Windows agent, VirusTotal key and first collection, including troubleshooting.
+
 For `netstat.v1` the agent snapshots the TCP/UDP connection tables with owning processes **and the DNS client resolver cache** (read via `dnsapi.dll` with cache-only queries, generating zero network traffic; a `Get-DnsClientCache` fallback covers restricted hosts). Cached `A`/`AAAA`/`CNAME` records are correlated to connection remote addresses, so each connection records the domain name(s) it reached. When the job finishes, the server automatically triages the snapshot: public IPs and external domains (private/loopback/link-local addresses and whitelisted values are excluded) are checked against VirusTotal, and the verdicts land in the job as a `ti_report` artifact viewable in the web console. The result is **data for an investigation**, not an assertion of compromise.
 
 For `webshell.v1` the agent checks the web server configuration file (IIS `applicationHost.config`) to confirm the host is a web server, reads the **explicitly configured upload directory** (IIS has no standard upload directory, so there is no default on Windows — without `-uploads` the job returns `needs_configuration` instead of scanning the drive) and collects files with script extensions (`.php`, `.phtml`, `.phar`, `.cgi`, `.pl`, `.py`, `.sh`, `.jsp`, `.aspx`). If the job carries a `since` timestamp, the agent also collects files modified after that moment, and it snapshots the newest IIS logs.
@@ -15,6 +17,8 @@ For `webshell.v1` the agent checks the web server configuration file (IIS `appli
 | `webshell.v1` | `upload`, `iis_log` | Script-extension files from the configured upload directory + snapshots of the newest IIS logs |
 
 ## Quick start: Docker server + Windows agent
+
+> The full walkthrough with troubleshooting lives in [SETUP.md](SETUP.md); this is the condensed version.
 
 Requirements: a Linux machine with Docker + compose v2, `openssl` and `make`; a Windows 10/11 64-bit machine with PowerShell (Administrator for `eventlog.v1` with the `Security` channel); both on the same trusted network (the lab currently runs plain HTTP, see the security notes below).
 
