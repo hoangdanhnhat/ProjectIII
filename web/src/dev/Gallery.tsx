@@ -182,7 +182,7 @@ function Demo() {
       </Section>
 
       <p className="fineprint">
-        Development-only component gallery. Open the console at <code className="mono">/next/?gallery</code> (or
+        Development-only component gallery. Open the console at <code className="mono">/?gallery</code> (or
         the Vite dev server with <code className="mono">?gallery</code>).
       </p>
     </>

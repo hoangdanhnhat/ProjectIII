@@ -5,12 +5,11 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 // Built assets are embedded into the Go server via //go:embed, so they are
-// written straight into internal/webui/dist. During the migration the
-// console is served at /next/; flip the base to "/" at cutover.
+// written straight into internal/webui/dist.
 const outDir = fileURLToPath(new URL("../internal/webui/dist", import.meta.url));
 
 export default defineConfig({
-  base: "/next/",
+  base: "/",
   plugins: [
     react(),
     {

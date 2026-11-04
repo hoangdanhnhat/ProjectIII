@@ -146,9 +146,17 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("GET /v1/agent/jobs/next", s.auth(true, s.next))
 	m.HandleFunc("POST /v1/agent/jobs/{id}/artifacts/{artifact}", s.auth(true, s.upload))
 	m.HandleFunc("POST /v1/agent/jobs/{id}/result", s.auth(true, s.result))
-	m.Handle("GET /next/", http.StripPrefix("/next", webui.NextHandler()))
+	// Old /next bookmarks (migration period) redirect to the same path at
+	// the root, assets included.
 	m.HandleFunc("GET /next", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/next/", http.StatusMovedPermanently)
+		http.Redirect(w, r, "/", http.StatusMovedPermanently)
+	})
+	m.HandleFunc("GET /next/", func(w http.ResponseWriter, r *http.Request) {
+		target := strings.TrimPrefix(r.URL.Path, "/next")
+		if target == "" {
+			target = "/"
+		}
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
 	})
 	m.Handle("GET /", webui.Handler())
 	return m

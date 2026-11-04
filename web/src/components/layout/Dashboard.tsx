@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Job, Meta } from "../../api/types";
 import { qk } from "../../api/queries";
@@ -11,6 +11,20 @@ import { JobList } from "../jobs/JobList";
 import { NewJobDialog } from "../jobs/NewJobDialog";
 import { StatsGrid } from "../jobs/StatsGrid";
 
+function jobIdFromHash(): string | null {
+  const match = /^#\/job\/([^/]+)$/.exec(window.location.hash);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+function hashForJob(jobId: string | null): string {
+  return jobId ? `#/job/${encodeURIComponent(jobId)}` : "";
+}
+
 interface DashboardProps {
   token: string;
   meta: Meta;
@@ -21,8 +35,26 @@ export function Dashboard({ token, meta }: DashboardProps) {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<FilterId>("all");
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(jobIdFromHash);
   const [newOpen, setNewOpen] = useState(false);
+
+  // Deep links: #/job/<id> opens the sheet, back/forward and pasted links
+  // stay in sync. State is only written from the event handler, never from
+  // the effect body.
+  useEffect(() => {
+    const sync = () => setSelectedId(jobIdFromHash());
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
+
+  useEffect(() => {
+    const target = hashForJob(selectedId);
+    if (target && window.location.hash !== target) {
+      window.history.replaceState(null, "", target);
+    } else if (!target && window.location.hash.startsWith("#/job/")) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+  }, [selectedId]);
 
   const jobs = jobsQuery.data?.jobs ?? [];
   const selected = jobs.find((job) => job.id === selectedId) ?? null;

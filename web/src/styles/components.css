@@ -1503,6 +1503,90 @@
 }
 
 /* -------------------------------------------------------------------------
+   Motion
+   ------------------------------------------------------------------------- */
+
+/* Entry animations: the native <dialog> opens instantly, so the visible
+   transition is done with keyframes on the open element and its backdrop. */
+.dialog[open] {
+  animation: dialog-in 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.dialog.sheet[open] {
+  animation: sheet-in 240ms cubic-bezier(0.22, 0.7, 0.2, 1);
+}
+
+.dialog[open]::backdrop {
+  animation: backdrop-in 180ms ease;
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes sheet-in {
+  from {
+    opacity: 0.35;
+    transform: translateX(36px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Surfaces fade between light and dark instead of snapping. */
+body,
+.topbar,
+.panel,
+.dialog,
+.ti-card,
+.stat,
+.artifact,
+.field-input,
+.btn,
+.chip,
+.tag,
+.tab,
+.icon-btn,
+.job,
+.table th,
+.table td {
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.table tbody tr:not([data-tone]):hover td {
+  background: var(--surface-2);
+}
+
+.table tbody tr[data-tone="red"]:hover td {
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
+}
+
+.table tbody tr[data-tone="amber"]:hover td {
+  background: color-mix(in srgb, var(--warn) 11%, transparent);
+}
+
+/* -------------------------------------------------------------------------
    Responsive
    ------------------------------------------------------------------------- */
 

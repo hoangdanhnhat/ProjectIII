@@ -128,7 +128,7 @@ Operator TI endpoints: `GET/PUT /v1/settings/ti`, `POST /v1/whitelist`, `DELETE 
 
 ## Front-end development
 
-The console is a React 19 + TypeScript app (`web/`) built with Vite and embedded into the server binary via `go:embed`. During the migration it is served at **`/next/`** while the legacy console keeps the root URL.
+The console is a React 19 + TypeScript app (`web/`) built with Vite and embedded into the server binary via `go:embed`; it is served at `/`. Old `/next/*` bookmarks from the migration redirect to the same path at the root.
 
 ```bash
 make web-install     # npm ci (runs in a Node 22 container)
@@ -137,7 +137,7 @@ make web-dev         # Vite dev server on :5173 with /v1 proxied to :8080
 make web-check       # typescript + ESLint + Stylelint + Vitest
 ```
 
-- Dev-only component gallery: open `http://localhost:5173/next/?gallery` (light and dark).
+- Dev-only component gallery: open `http://localhost:5173/?gallery` (light and dark).
 - The bundle is written to `internal/webui/dist`; `make lab-up` also builds it inside Docker.
 - Layout, conventions and recipes: [AGENTS.md](AGENTS.md).
 

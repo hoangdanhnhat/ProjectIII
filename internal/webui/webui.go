@@ -1,11 +1,4 @@
-// Package webui serves the embedded operator consoles.
-//
-// During the front-end migration two bundles are embedded:
-//   - static/  the legacy vanilla JS console, served at / by Handler
-//   - dist/    the React console, served at /next/ by NextHandler
-//
-// Once parity is verified, Handler switches to the dist bundle and static/
-// is deleted.
+// Package webui serves the embedded operator console (React build in dist/).
 package webui
 
 import (
@@ -17,9 +10,6 @@ import (
 
 //go:embed all:dist
 var distFS embed.FS
-
-//go:embed static
-var legacyFS embed.FS
 
 const contentSecurityPolicy = "default-src 'self'; " +
 	"script-src 'self'; " +
@@ -40,7 +30,7 @@ code{background:#f2f4f6;padding:2px 5px;border-radius:4px}</style></head>
 <body><h1>Front-end has not been built</h1>
 <p>This server was compiled without the React console bundle.</p>
 <p>Build it with <code>make web-build</code> (or <code>npm ci &amp;&amp; npm run build</code> in
-<code>web/</code>) and rebuild the server, or use the legacy console at <a href="/">/</a>.</p>
+<code>web/</code>) and rebuild the server.</p>
 </body></html>`
 
 func init() {
@@ -51,18 +41,8 @@ func init() {
 	_ = mime.AddExtensionType(".map", "application/json")
 }
 
-// Handler serves the legacy console at the site root.
+// Handler serves the built console with hardened response headers.
 func Handler() http.Handler {
-	sub, err := fs.Sub(legacyFS, "static")
-	if err != nil {
-		panic(err)
-	}
-	return withSecurityHeaders(http.FileServerFS(sub))
-}
-
-// NextHandler serves the React console (migration route and, after cutover,
-// the root console).
-func NextHandler() http.Handler {
 	sub, err := fs.Sub(distFS, "dist")
 	if err != nil {
 		panic(err)

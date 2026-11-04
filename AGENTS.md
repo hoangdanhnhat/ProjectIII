@@ -14,7 +14,7 @@ change.
   unit-tested on Linux, OS APIs live in `*_windows.go`.
 - `internal/ti` — threat-intel engine: settings, white/black lists,
   VirusTotal client, enrichment.
-- `internal/webui` — embeds the consoles (`static/` legacy, `dist/` React).
+- `internal/webui` — embeds the React console build (`dist/`).
 - `web/` — React console (TypeScript, Vite, TanStack Query, Vitest).
 - `deploy/` — Docker lab, systemd/Windows service templates.
 - `SETUP.md` — operator setup guide. `README.md` — feature reference.
@@ -112,18 +112,17 @@ user-visible) a sentence in `README.md`.
 **A new API endpoint**: implement it in Go, add the type to
 `api/types.ts`, the call in `api/queries.ts`, and an MSW handler + test.
 
-## Migration status (front-end rewrite)
+## Front-end build
 
-- Legacy vanilla console is served at `/` from `internal/webui/static/`.
-- The React console is served at `/next/` from `internal/webui/dist/` and
-  is feature-complete (dashboard, triage, settings); only the cutover
-  remains.
-- `web/vite.config.ts` sets `base: "/next/"`; at cutover flip it to `/`,
-  point `Handler()` at the dist bundle, delete `static/`, and update
-  `internal/webui/webui_test.go`.
+- `web/vite.config.ts` sets `base: "/"` and writes straight into
+  `internal/webui/dist/`, which `internal/webui` embeds.
 - `internal/webui/dist/.embed` is committed so `go build` works before a
   front-end build; `vite build` recreates the marker. Never commit the rest
   of `dist/` or `web/node_modules/` (gitignored).
+- When `dist/` has no `index.html` the server serves a "front-end has not
+  been built" page that names the build command.
+- `/next/*` URLs redirect to the same path at `/` (leftover migration
+  bookmarks).
 
 ## Evidence and security invariants (do not weaken)
 
