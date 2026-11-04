@@ -17,7 +17,13 @@ RUN go test ./... \
 
 # --- coordination server ----------------------------------------------------
 
+# ca-certificates is required for the VirusTotal HTTPS lookups: the plain
+# ubuntu image ships without a trust store, so every TLS connection fails
+# with "x509: certificate signed by unknown authority".
 FROM ubuntu:24.04 AS server
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /out/dfir-server /usr/local/bin/dfir-server
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/dfir-server"]

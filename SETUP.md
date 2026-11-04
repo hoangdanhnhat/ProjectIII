@@ -221,6 +221,7 @@ Old jobs and evidence in `./data/` are untouched by an update.
 | `eventlog.v1` returns `partial` with access denied | The `Security` channel needs an Administrator agent. |
 | Job `ti_status` is `skipped` | No VirusTotal key configured — add it in the console and press **Re-run check**. |
 | Job `ti_status` is `partial` | Some VT queries failed (invalid key or HTTP 429) — the reason on the job names the error; wait a minute and re-run. |
+| TI reason contains `x509: certificate signed by unknown authority` | The server image was built before the CA fix (the plain Ubuntu image ships no trust store). Rebuild with `make lab-up`, then press **Re-run check** — no re-collection needed. |
 | Windows scenarios return `skipped ... not implemented on linux` | The optional Linux `web` container is running and claimed the job: `docker compose stop web`. |
 | Port 8080 already in use | Set `DFIR_CONSOLE_PORT=18080` in `.env`, then `make lab-up` again. |
 | Console unreachable from Windows | Check the Linux firewall and use the LAN IP, not `localhost`. |
