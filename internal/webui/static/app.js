@@ -32,6 +32,35 @@ const KIND_LABELS = {
   upload: "Upload",
   apache_log: "Apache log",
   iis_log: "IIS log",
+  netstat_snapshot: "Netstat & DNS",
+  ti_report: "Threat Intel report",
+  event_log: "Event log",
+};
+
+const TI_STATUS = {
+  running: { label: "TI running", tone: "blue" },
+  completed: { label: "TI completed", tone: "green" },
+  partial: { label: "TI partial", tone: "amber" },
+  skipped: { label: "TI skipped", tone: "gray" },
+  failed: { label: "TI failed", tone: "red" },
+  interrupted: { label: "TI interrupted", tone: "gray" },
+};
+
+const VERDICTS = {
+  malicious: { label: "Malicious", tone: "red" },
+  suspicious: { label: "Suspicious", tone: "amber" },
+  clean: { label: "Clean", tone: "green" },
+  whitelisted: { label: "Whitelisted", tone: "violet" },
+  unrated: { label: "Unrated", tone: "gray" },
+  private: { label: "Private", tone: "gray" },
+  skipped: { label: "Skipped", tone: "gray" },
+};
+
+const ENTRY_TYPE_LABELS = {
+  ip: "IP",
+  cidr: "Network",
+  domain: "Domain",
+  domain_wildcard: "Wildcard",
 };
 
 const state = {
@@ -44,6 +73,13 @@ const state = {
   selectedId: null,
   loadedOnce: false,
   pollTimer: null,
+  // Threat intel state
+  artifactData: new Map(), // artifact.id -> parsed JSON (or null when unparsable)
+  reportForDetail: null,   // { jobId, indicators } backing the findings table
+  tiTab: "findings",
+  tiQuery: "",
+  tiSettings: null,
+  wlQuery: "",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -92,6 +128,28 @@ const ui = {
   detailClose: $("detail-close"),
   sheetToasts: $("sheet-toasts"),
   toasts: $("toasts"),
+  // Threat intel settings dialog
+  tiBtn: $("ti-btn"),
+  tiDialog: $("ti-dialog"),
+  tiForm: $("ti-form"),
+  tiClose: $("ti-close"),
+  tiDoneBtn: $("ti-done-btn"),
+  vtStateChip: $("vt-state-chip"),
+  vtKeyInput: $("vt-key-input"),
+  vtKeyReveal: $("vt-key-reveal"),
+  vtAutoInput: $("vt-auto-input"),
+  vtRateInput: $("vt-rate-input"),
+  vtMaxInput: $("vt-max-input"),
+  tiSaveBtn: $("ti-save-btn"),
+  tiError: $("ti-error"),
+  wlCount: $("wl-count"),
+  wlValueInput: $("wl-value-input"),
+  wlNoteInput: $("wl-note-input"),
+  wlAddBtn: $("wl-add-btn"),
+  wlSearchInput: $("wl-search-input"),
+  wlList: $("wl-list"),
+  wlEmpty: $("wl-empty"),
+  wlError: $("ti-error-wl"),
 };
 
 class ApiError extends Error {
@@ -339,6 +397,9 @@ function clearSession() {
   state.jobs = [];
   state.snapshot = "";
   state.loadedOnce = false;
+  state.artifactData.clear();
+  state.tiSettings = null;
+  state.reportForDetail = null;
   try {
     sessionStorage.removeItem(TOKEN_KEY);
   } catch (err) {
@@ -351,6 +412,8 @@ function endSession(message) {
   stopPoll();
   if (ui.newDialog.open) ui.newDialog.close();
   if (ui.jobDialog.open) ui.jobDialog.close();
+  if (ui.tiDialog.open) ui.tiDialog.close();
+  state.reportForDetail = null;
   showConnect(message);
 }
 
@@ -359,6 +422,7 @@ function showConnect(message) {
   ui.connectView.hidden = false;
   ui.newBtn.hidden = true;
   ui.newBtn.disabled = true;
+  ui.tiBtn.hidden = true;
   ui.signoutBtn.hidden = true;
   setConnection("idle", "Not connected");
   showConnectError(message || "");
@@ -375,6 +439,7 @@ function showDashboard() {
   ui.dashboardView.hidden = false;
   ui.newBtn.hidden = false;
   ui.newBtn.disabled = false;
+  ui.tiBtn.hidden = false;
   ui.signoutBtn.hidden = false;
   setConnection("ok", "Connected");
   const scenarios = metaScenarios();
@@ -682,6 +747,10 @@ function renderDetail(job) {
   if (job.since) addKv(facts, "Modified since", absolute(job.since));
   body.append(facts);
 
+  if (job.scenario === "netstat.v1") {
+    body.append(buildTISection(job));
+  }
+
   const artifacts = Array.isArray(job.artifacts) ? job.artifacts : [];
   const section = el("section", { class: "section" },
     el("div", { class: "section-head" },
@@ -806,6 +875,601 @@ async function createCollection(event) {
     ui.createBtn.disabled = false;
     ui.createBtn.textContent = "Queue collection";
   }
+}
+
+/* --------------------------------------------------------------------------
+   Threat Intel: artifact loading, triage section, findings/connections/DNS
+   -------------------------------------------------------------------------- */
+
+const ARTIFACT_CACHE_LIMIT = 24;
+
+function artifactById(job, kind) {
+  const list = Array.isArray(job.artifacts) ? job.artifacts : [];
+  let found = null;
+  for (const artifact of list) {
+    if (artifact.kind === kind) found = artifact; // latest wins
+  }
+  return found;
+}
+
+async function loadArtifactJSON(job, artifact) {
+  if (state.artifactData.has(artifact.id)) {
+    return state.artifactData.get(artifact.id);
+  }
+  let parsed = null;
+  try {
+    const response = await api("/v1/jobs/" + encodeURIComponent(job.id) + "/artifacts/" + encodeURIComponent(artifact.id));
+    const text = await response.text();
+    try {
+      parsed = JSON.parse(text);
+    } catch (err) {
+      parsed = null;
+    }
+  } catch (err) {
+    if (err.status === 401) throw err; // session handling already fired
+    // Negative caching: a failed download must not trigger a re-render
+    // loop in buildTISection, which re-fetches whatever is uncached.
+    parsed = null;
+  }
+  while (state.artifactData.size >= ARTIFACT_CACHE_LIMIT) {
+    const oldest = state.artifactData.keys().next().value;
+    state.artifactData.delete(oldest);
+  }
+  state.artifactData.set(artifact.id, parsed);
+  return parsed;
+}
+
+function tiStatusChip(status) {
+  const info = TI_STATUS[status] || { label: status, tone: "gray" };
+  return el("span", { class: "chip", "data-tone": info.tone },
+    el("span", { class: "chip-dot" }),
+    info.label
+  );
+}
+
+function verdictChip(verdict) {
+  const info = VERDICTS[verdict] || { label: verdict || "—", tone: "gray" };
+  return el("span", { class: "chip", "data-tone": info.tone },
+    el("span", { class: "chip-dot" }),
+    info.label
+  );
+}
+
+// buildTISection renders the threat-intel block for a netstat.v1 job. Data
+// is rendered synchronously when cached; otherwise a placeholder kicks off
+// the fetch and re-renders the whole detail.
+function buildTISection(job) {
+  const section = el("section", { class: "section ti" });
+  if (state.reportForDetail && state.reportForDetail.jobId !== job.id) {
+    state.reportForDetail = null;
+  }
+
+  const snapshotArtifact = artifactById(job, "netstat_snapshot");
+  const reportArtifact = artifactById(job, "ti_report");
+  const canRun = !!snapshotArtifact && job.ti_status !== "running";
+
+  const head = el("div", { class: "ti-head" },
+    el("h3", { text: "Threat Intel" }),
+    job.ti_status ? tiStatusChip(job.ti_status) : "",
+    canRun
+      ? el("button", {
+          class: "btn btn--sm",
+          type: "button",
+          "data-ti-rerun": job.id,
+          title: "Re-run the VirusTotal check with current settings and whitelist",
+        }, icon("refresh"), "Re-run check")
+      : ""
+  );
+  section.append(head);
+
+  if (job.ti_reason) {
+    const tone = job.ti_status === "failed" || job.ti_status === "partial" ? "amber" : "gray";
+    section.append(el("p", { class: "ti-reason", text: job.ti_reason }));
+  }
+
+  if (job.ti_status === "running") {
+    section.append(el("div", { class: "ti-loading" },
+      icon("loader", "icon spin"),
+      el("span", { text: "Checking indicators on VirusTotal… this can take a few minutes at the free-tier rate limit." })
+    ));
+  }
+
+  const summary = reportSummaryFor(job, reportArtifact);
+  if (summary) section.append(summary);
+
+  const tabs = el("div", { class: "tabs", role: "group", "aria-label": "Threat intel views" },
+    tabButton("findings", "Findings", "shield"),
+    tabButton("connections", "Connections", "network"),
+    tabButton("dns", "DNS cache", "server")
+  );
+  section.append(tabs);
+
+  const tools = el("div", { class: "ti-tools" },
+    el("div", { class: "search" },
+      icon("search"),
+      el("input", {
+        id: "ti-search",
+        type: "search",
+        placeholder: "Filter by IP, domain, process, verdict…",
+        "aria-label": "Filter threat intel tables",
+        autocomplete: "off",
+        value: state.tiQuery || "",
+      })
+    )
+  );
+  section.append(tools, el("div", { id: "ti-table" }));
+
+  renderTITable(job);
+
+  // Fetch missing artifacts in the background, then refresh once.
+  const missing = [];
+  if (snapshotArtifact && !state.artifactData.has(snapshotArtifact.id)) missing.push(snapshotArtifact);
+  if (reportArtifact && !state.artifactData.has(reportArtifact.id)) missing.push(reportArtifact);
+  if (missing.length) {
+    Promise.allSettled(missing.map((artifact) => loadArtifactJSON(job, artifact))).then(() => {
+      if (state.selectedId === job.id) {
+        const fresh = findJob(job.id);
+        if (fresh) renderDetail(fresh);
+      }
+    });
+  }
+  return section;
+}
+
+function tabButton(id, label, iconName) {
+  return el("button", {
+    class: "tab" + (state.tiTab === id ? " is-active" : ""),
+    type: "button",
+    "data-ti-tab": id,
+    "aria-pressed": state.tiTab === id ? "true" : "false",
+  }, icon(iconName), label, el("span", { class: "count-pill", id: "ti-count-" + id, text: "…" }));
+}
+
+function reportSummaryFor(job, reportArtifact) {
+  if (!reportArtifact || job.ti_status === "running") return null;
+  const report = state.artifactData.get(reportArtifact.id);
+  if (!report || !report.summary) return null;
+  const s = report.summary;
+  const items = [
+    ["malicious", s.malicious],
+    ["suspicious", s.suspicious],
+    ["clean", s.clean],
+    ["whitelisted", s.whitelisted],
+    ["unrated", s.unrated],
+    ["skipped", s.skipped],
+    ["private", s.private],
+  ];
+  const chips = el("div", { class: "ti-summary" });
+  for (const [key, count] of items) {
+    if (!count) continue;
+    const info = VERDICTS[key] || { label: key, tone: "gray" };
+    chips.append(el("span", { class: "chip", "data-tone": info.tone, title: key },
+      el("span", { class: "chip-dot" }),
+      count + " " + info.label
+    ));
+  }
+  return chips.children.length ? chips : null;
+}
+
+// renderTITable fills the #ti-table container for the currently selected
+// job. Called on tab switches, filter input, and detail re-renders.
+function renderTITable(job) {
+  const host = document.getElementById("ti-table");
+  if (!host) return;
+  const snapshotArtifact = artifactById(job, "netstat_snapshot");
+  const reportArtifact = artifactById(job, "ti_report");
+  const snapshot = snapshotArtifact ? state.artifactData.get(snapshotArtifact.id) : null;
+  const report = reportArtifact ? state.artifactData.get(reportArtifact.id) : null;
+
+  if (state.tiTab === "findings") {
+    host.replaceChildren(findingsTable(job, report, snapshot, reportArtifact));
+  } else if (state.tiTab === "connections") {
+    host.replaceChildren(connectionsTable(job, snapshot, snapshotArtifact));
+  } else {
+    host.replaceChildren(dnsTable(job, snapshot, snapshotArtifact));
+  }
+  updateTICounts(job, report, snapshot);
+}
+
+function updateTICounts(job, report, snapshot) {
+  const findings = document.getElementById("ti-count-findings");
+  const conns = document.getElementById("ti-count-connections");
+  const dns = document.getElementById("ti-count-dns");
+  if (findings) findings.textContent = report && report.indicators ? String(report.indicators.length) : "0";
+  if (conns) conns.textContent = snapshot && snapshot.connections ? String(snapshot.connections.length) : "0";
+  if (dns) dns.textContent = snapshot && snapshot.dns_cache ? String(snapshot.dns_cache.length) : "0";
+}
+
+function flaggedByValue(report) {
+  const flagged = new Map(); // value -> tone
+  if (!report || !Array.isArray(report.indicators)) return flagged;
+  for (const ind of report.indicators) {
+    if (ind.verdict === "malicious" || ind.verdict === "suspicious") {
+      flagged.set(String(ind.value), ind.verdict === "malicious" ? "red" : "amber");
+    }
+  }
+  return flagged;
+}
+
+function matchesTIQuery(parts) {
+  if (!state.tiQuery) return true;
+  return parts.join(" ").toLowerCase().includes(state.tiQuery);
+}
+
+function findingsTable(job, report, snapshot, reportArtifact) {
+  const wrap = el("div", { class: "table-wrap ti-table--findings" });
+  if (!reportArtifact) {
+    return wrap.append(emptyRow(job.ti_status === "running"
+      ? "Waiting for the threat intel report…"
+      : "No threat intel report yet — run a check to triage this collection.")), wrap;
+  }
+  if (!report || !Array.isArray(report.indicators)) {
+    return wrap.append(emptyRow("The report artifact could not be parsed.")), wrap;
+  }
+  state.reportForDetail = { jobId: job.id, indicators: report.indicators };
+  wrap.append(el("div", { class: "thead" },
+    el("span", { text: "Indicator" }),
+    el("span", { text: "Verdict" }),
+    el("span", { text: "Detections" }),
+    el("span", { text: "Process / route" }),
+    el("span", { text: "" })
+  ));
+  const rows = el("div");
+  let shown = 0;
+  report.indicators.forEach((ind, index) => {
+    const parts = [ind.value, ind.type, ind.verdict, (ind.domains || []).join(" "), (ind.processes || []).join(" "), ind.classification];
+    if (!matchesTIQuery(parts)) return;
+    shown++;
+    const vt = ind.vt || {};
+    const tone = ind.verdict === "malicious" ? "red" : ind.verdict === "suspicious" ? "amber" : null;
+    const row = el("div", { class: "trow", "data-tone": tone || undefined },
+      el("div", { class: "cell" },
+        el("div", { class: "cell-main" },
+          el("span", { class: "tag", "data-type": ind.type === "ip" ? "ip" : "domain", text: ind.type === "ip" ? "IP" : "Domain" }),
+          el("span", { class: "mono cell-value", text: ind.value })
+        ),
+        (ind.domains || []).length
+          ? el("div", { class: "cell-sub" }, ...ind.domains.map((d) => el("span", { class: "mono", text: d })))
+          : "",
+        ind.whitelist_match
+          ? el("div", { class: "cell-sub" }, "via " + ind.whitelist_match)
+          : ""
+      ),
+      el("div", { class: "cell" }, verdictChip(ind.verdict)),
+      el("div", { class: "cell" },
+        vt.detections ? el("span", { class: "ratio", text: vt.detections }) : el("span", { class: "muted", text: "—" }),
+        vt.error ? el("div", { class: "cell-sub", title: vt.error, text: vt.error }) : ""
+      ),
+      el("div", { class: "cell" },
+        (ind.processes || []).length
+          ? el("span", { class: "cell-value", text: ind.processes.join(", ") })
+          : el("span", { class: "muted", text: ind.type === "domain" ? "DNS cache" : "—" }),
+        ind.connections ? el("div", { class: "cell-sub", text: ind.connections + " connection" + (ind.connections > 1 ? "s" : "") }) : ""
+      ),
+      el("div", { class: "cell-actions" },
+        vt.link
+          ? el("a", { class: "vt-link", href: vt.link, target: "_blank", rel: "noopener noreferrer", "aria-label": "Open VirusTotal report for " + ind.value, title: "VirusTotal report" }, icon("external"))
+          : "",
+        canWhitelistIndicator(ind)
+          ? el("button", {
+              class: "wl-mini",
+              type: "button",
+              "data-ti-wl": String(index),
+              "aria-label": "Whitelist " + ind.value,
+              title: "Whitelist " + ind.value + " and re-run the check",
+            }, icon("check"))
+          : ""
+      )
+    );
+    rows.append(row);
+  });
+  wrap.append(rows);
+  if (!shown) wrap.append(emptyRow("No indicators match this filter."));
+  return wrap;
+}
+
+function canWhitelistIndicator(ind) {
+  return ind.classification === "public" || ind.verdict === "skipped" || ind.verdict === "unrated" ||
+    ind.verdict === "clean" || ind.verdict === "suspicious" || ind.verdict === "malicious";
+}
+
+function connectionsTable(job, snapshot, snapshotArtifact) {
+  const wrap = el("div", { class: "table-wrap ti-table--connections" });
+  if (!snapshotArtifact) {
+    return wrap.append(emptyRow("No netstat snapshot was uploaded for this collection.")), wrap;
+  }
+  if (!snapshot || !Array.isArray(snapshot.connections)) {
+    return wrap.append(emptyRow("The snapshot artifact could not be parsed.")), wrap;
+  }
+  const reportArtifact = artifactById(job, "ti_report");
+  const report = reportArtifact ? state.artifactData.get(reportArtifact.id) : null;
+  const flagged = flaggedByValue(report);
+  wrap.append(el("div", { class: "thead" },
+    el("span", { text: "Remote" }),
+    el("span", { text: "Local" }),
+    el("span", { text: "Proto · state" }),
+    el("span", { text: "Process" }),
+    el("span", { text: "Domains" })
+  ));
+  const rows = el("div");
+  let shown = 0;
+  for (const conn of snapshot.connections) {
+    const parts = [conn.remote_addr, conn.local_addr, conn.proto, conn.state, conn.process, String(conn.pid), (conn.domains || []).join(" ")];
+    if (!matchesTIQuery(parts)) continue;
+    shown++;
+    const tone = flagged.get(String(conn.remote_addr));
+    rows.append(el("div", { class: "trow", "data-tone": tone || undefined },
+      el("div", { class: "cell" },
+        el("span", { class: "mono cell-value", text: conn.remote_addr ? conn.remote_addr + ":" + (conn.remote_port || 0) : "—" }),
+        (conn.domains || []).length ? el("div", { class: "cell-sub" }, ...conn.domains.map((d) => el("span", { class: "mono", text: d }))) : ""
+      ),
+      el("div", { class: "cell" }, el("span", { class: "mono cell-value", text: conn.local_addr + ":" + conn.local_port })),
+      el("div", { class: "cell" },
+        el("span", { class: "cell-value", text: conn.proto }),
+        conn.state ? el("div", { class: "cell-sub", text: conn.state }) : ""
+      ),
+      el("div", { class: "cell" },
+        conn.process ? el("span", { class: "cell-value", text: conn.process }) : el("span", { class: "muted", text: "—" }),
+        el("div", { class: "cell-sub", text: "pid " + conn.pid })
+      ),
+      el("div", { class: "cell" },
+        (conn.domains || []).length
+          ? el("span", { class: "cell-value", text: conn.domains.join(", ") })
+          : el("span", { class: "muted", text: "—" })
+      )
+    ));
+  }
+  wrap.append(rows);
+  if (!shown) wrap.append(emptyRow("No connections match this filter."));
+  return wrap;
+}
+
+function dnsTable(job, snapshot, snapshotArtifact) {
+  const wrap = el("div", { class: "table-wrap ti-table--dns" });
+  if (!snapshotArtifact) {
+    return wrap.append(emptyRow("No netstat snapshot was uploaded for this collection.")), wrap;
+  }
+  if (!snapshot || !Array.isArray(snapshot.dns_cache) || snapshot.dns_cache.length === 0) {
+    return wrap.append(emptyRow(snapshotArtifact && snapshot && !snapshot.dns_cache
+      ? "The DNS client cache was empty or unavailable on the endpoint."
+      : "The snapshot artifact could not be parsed.")), wrap;
+  }
+  const reportArtifact = artifactById(job, "ti_report");
+  const report = reportArtifact ? state.artifactData.get(reportArtifact.id) : null;
+  const flagged = flaggedByValue(report);
+  wrap.append(el("div", { class: "thead" },
+    el("span", { text: "Name" }),
+    el("span", { text: "Type" }),
+    el("span", { text: "TTL" }),
+    el("span", { text: "Data" })
+  ));
+  const rows = el("div");
+  let shown = 0;
+  for (const rec of snapshot.dns_cache) {
+    const parts = [rec.name, rec.type, rec.data, String(rec.ttl || 0)];
+    if (!matchesTIQuery(parts)) continue;
+    shown++;
+    const tone = flagged.get(String(rec.name));
+    rows.append(el("div", { class: "trow", "data-tone": tone || undefined },
+      el("div", { class: "cell" }, el("span", { class: "mono cell-value break", text: rec.name })),
+      el("div", { class: "cell" }, el("span", { class: "tag", "data-type": "dns", text: rec.type })),
+      el("div", { class: "cell" }, el("span", { class: "ratio", text: rec.ttl ? rec.ttl + "s" : "—" })),
+      el("div", { class: "cell" }, el("span", { class: "mono cell-value break", text: rec.data }))
+    ));
+  }
+  wrap.append(rows);
+  if (!shown) wrap.append(emptyRow("No DNS entries match this filter."));
+  return wrap;
+}
+
+function emptyRow(message) {
+  return el("div", { class: "trow-empty", text: message });
+}
+
+async function rerunTI(jobId) {
+  try {
+    const response = await api("/v1/jobs/" + encodeURIComponent(jobId) + "/ti", { method: "POST" });
+    await response.json();
+    toast("Threat intel check re-queued.", "info", ui.sheetToasts);
+    await loadJobs({ silent: true });
+  } catch (err) {
+    if (err.status !== 401) toast(err.message || "Could not re-run the check.", "error", ui.sheetToasts);
+  }
+}
+
+async function whitelistFromFindings(jobId, indicator) {
+  try {
+    const response = await api("/v1/whitelist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: indicator.value, note: "whitelisted from collection " + jobId }),
+    });
+    await response.json();
+    toast("Whitelisted " + indicator.value + " — re-running the check.", "success", ui.sheetToasts);
+    await rerunTI(jobId);
+  } catch (err) {
+    if (err.status !== 401) toast(err.message || "Could not whitelist " + indicator.value + ".", "error", ui.sheetToasts);
+  }
+}
+
+function onDetailBodyClick(event) {
+  const tab = event.target.closest("[data-ti-tab]");
+  if (tab) {
+    state.tiTab = tab.dataset.tiTab;
+    const job = findJob(state.selectedId);
+    if (job) renderDetail(job);
+    return;
+  }
+  const rerun = event.target.closest("[data-ti-rerun]");
+  if (rerun) {
+    rerunTI(rerun.dataset.tiRerun);
+    return;
+  }
+  const wl = event.target.closest("[data-ti-wl]");
+  if (wl && state.reportForDetail) {
+    const { jobId, indicators } = state.reportForDetail;
+    const indicator = indicators[Number(wl.dataset.tiWl)];
+    if (indicator) whitelistFromFindings(jobId, indicator);
+  }
+}
+
+function onDetailBodyInput(event) {
+  if (event.target.id === "ti-search") {
+    state.tiQuery = event.target.value.trim().toLowerCase();
+    const job = findJob(state.selectedId);
+    if (job) renderTITable(job);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Threat Intel settings dialog
+   -------------------------------------------------------------------------- */
+
+async function openTIDialog() {
+  showTIError("");
+  showWLError("");
+  ui.tiDialog.showModal();
+  ui.vtKeyInput.value = "";
+  await refreshTISettings();
+}
+
+async function refreshTISettings() {
+  try {
+    const response = await api("/v1/settings/ti");
+    state.tiSettings = await response.json();
+    renderTISettings();
+  } catch (err) {
+    if (err.status !== 401) showTIError(err.message || "Could not load settings.");
+  }
+}
+
+function renderTISettings() {
+  const settings = state.tiSettings;
+  if (!settings) return;
+  const vt = settings.vt || {};
+  const configured = !!vt.configured;
+  ui.vtStateChip.dataset.tone = configured ? "green" : "gray";
+  ui.vtStateChip.replaceChildren(
+    el("span", { class: "chip-dot" }),
+    document.createTextNode(configured ? "Configured " + (vt.key_preview || "") : "Not configured")
+  );
+  ui.vtKeyInput.placeholder = configured ? "Configured — paste a new key to replace it" : "Paste a key to enable VirusTotal checks";
+  ui.vtAutoInput.checked = !!vt.auto_enrich;
+  ui.vtRateInput.value = String(vt.rate_per_min || 4);
+  ui.vtMaxInput.value = String(vt.max_queries_per_job || 40);
+  renderWhitelist();
+}
+
+function renderWhitelist() {
+  const settings = state.tiSettings;
+  const entries = settings && settings.whitelist && Array.isArray(settings.whitelist.entries)
+    ? settings.whitelist.entries
+    : [];
+  ui.wlCount.textContent = String(entries.length);
+  const query = state.wlQuery;
+  const visible = entries.filter((entry) => !query || String(entry.value).toLowerCase().includes(query));
+  const rows = visible.map((entry) => el("li", { class: "wl-row" },
+    el("span", { class: "tag", "data-type": entry.type, text: ENTRY_TYPE_LABELS[entry.type] || entry.type }),
+    el("span", { class: "wl-main" },
+      el("span", { class: "mono wl-value", text: entry.value }),
+      entry.note ? el("span", { class: "wl-note", title: entry.note, text: entry.note }) : ""
+    ),
+    el("span", { class: "wl-added", title: entry.created_at || "", text: entry.created_at ? relative(entry.created_at) : "" }),
+    el("button", {
+      class: "icon-btn icon-btn--danger",
+      type: "button",
+      "data-wl-remove": entry.id,
+      "aria-label": "Remove " + entry.value + " from the whitelist",
+      title: "Remove",
+    }, icon("trash"))
+  ));
+  ui.wlList.replaceChildren(...rows);
+  ui.wlEmpty.hidden = visible.length > 0;
+  if (entries.length && visible.length === 0) {
+    ui.wlEmpty.textContent = "Nothing matches this filter.";
+  } else {
+    ui.wlEmpty.textContent = "The whitelist is empty — every public indicator will be checked.";
+  }
+}
+
+async function saveTISettings(event) {
+  event.preventDefault();
+  if (ui.tiSaveBtn.disabled) return;
+  showTIError("");
+  const rate = Number.parseInt(ui.vtRateInput.value, 10);
+  const max = Number.parseInt(ui.vtMaxInput.value, 10);
+  const body = { vt_auto_enrich: ui.vtAutoInput.checked };
+  if (Number.isFinite(rate)) body.vt_rate_per_min = rate;
+  if (Number.isFinite(max)) body.vt_max_queries_per_job = max;
+  const key = ui.vtKeyInput.value.trim();
+  if (key) body.vt_api_key = key;
+  ui.tiSaveBtn.disabled = true;
+  ui.tiSaveBtn.textContent = "Saving…";
+  try {
+    const response = await api("/v1/settings/ti", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    await response.json();
+    ui.vtKeyInput.value = "";
+    toast("Threat Intel settings saved.", "success");
+    await refreshTISettings();
+  } catch (err) {
+    if (err.status !== 401) showTIError(err.message || "Could not save settings.");
+  } finally {
+    ui.tiSaveBtn.disabled = false;
+    ui.tiSaveBtn.textContent = "Save settings";
+  }
+}
+
+async function addWhitelistEntry() {
+  if (ui.wlAddBtn.disabled) return;
+  showWLError("");
+  const value = ui.wlValueInput.value.trim();
+  const note = ui.wlNoteInput.value.trim();
+  if (!value) {
+    showWLError("Enter an IP, CIDR, domain or *.wildcard value.");
+    ui.wlValueInput.focus();
+    return;
+  }
+  ui.wlAddBtn.disabled = true;
+  try {
+    const response = await api("/v1/whitelist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value, note }),
+    });
+    await response.json();
+    ui.wlValueInput.value = "";
+    ui.wlNoteInput.value = "";
+    toast("Whitelisted " + value, "success");
+    await refreshTISettings();
+  } catch (err) {
+    if (err.status !== 401) showWLError(err.message || "Could not add the entry.");
+  } finally {
+    ui.wlAddBtn.disabled = false;
+  }
+}
+
+async function removeWhitelistEntry(id) {
+  try {
+    const response = await api("/v1/whitelist/" + encodeURIComponent(id), { method: "DELETE" });
+    if (response.status === 204) toast("Removed from the whitelist.", "success");
+    await refreshTISettings();
+  } catch (err) {
+    if (err.status !== 401) toast(err.message || "Could not remove the entry.", "error");
+  }
+}
+
+function showTIError(message) {
+  ui.tiError.textContent = message || "";
+  ui.tiError.hidden = !message;
+}
+
+function showWLError(message) {
+  ui.wlError.textContent = message || "";
+  ui.wlError.hidden = !message;
 }
 
 /* --------------------------------------------------------------------------
@@ -944,7 +1608,46 @@ function bindEvents() {
   });
   ui.jobDialog.addEventListener("close", () => {
     state.selectedId = null;
+    state.reportForDetail = null;
     if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+  });
+  ui.detailBody.addEventListener("click", onDetailBodyClick);
+  ui.detailBody.addEventListener("input", onDetailBodyInput);
+
+  // Threat Intel settings dialog
+  ui.tiBtn.addEventListener("click", openTIDialog);
+  ui.tiClose.addEventListener("click", () => ui.tiDialog.close());
+  ui.tiDoneBtn.addEventListener("click", () => ui.tiDialog.close());
+  ui.tiDialog.addEventListener("click", (event) => {
+    if (event.target === ui.tiDialog) ui.tiDialog.close();
+  });
+  ui.tiDialog.addEventListener("close", () => {
+    showTIError("");
+    showWLError("");
+  });
+  ui.tiForm.addEventListener("submit", saveTISettings);
+  ui.vtKeyReveal.addEventListener("click", () => {
+    const reveal = ui.vtKeyInput.type === "password";
+    ui.vtKeyInput.type = reveal ? "text" : "password";
+    ui.vtKeyReveal.textContent = reveal ? "Hide" : "Show";
+    ui.vtKeyReveal.setAttribute("aria-pressed", reveal ? "true" : "false");
+  });
+  ui.wlAddBtn.addEventListener("click", addWhitelistEntry);
+  const onWlEnter = (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      addWhitelistEntry();
+    }
+  };
+  ui.wlValueInput.addEventListener("keydown", onWlEnter);
+  ui.wlNoteInput.addEventListener("keydown", onWlEnter);
+  ui.wlSearchInput.addEventListener("input", () => {
+    state.wlQuery = ui.wlSearchInput.value.trim().toLowerCase();
+    renderWhitelist();
+  });
+  ui.wlList.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-wl-remove]");
+    if (button) removeWhitelistEntry(button.dataset.wlRemove);
   });
 
   window.addEventListener("hashchange", () => {

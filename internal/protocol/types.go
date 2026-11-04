@@ -14,6 +14,7 @@ const (
 	KindIISLog          Kind = "iis_log"
 	KindNetstatSnapshot Kind = "netstat_snapshot"
 	KindEventLog        Kind = "event_log"
+	KindTIReport        Kind = "ti_report"
 )
 
 type Job struct {
@@ -26,6 +27,11 @@ type Job struct {
 	EndedAt   *time.Time `json:"ended_at,omitempty"`
 	Status    string     `json:"status"`
 	Reason    string     `json:"reason,omitempty"`
+	// TIStatus/TIReason track the server-side threat-intel enrichment of
+	// netstat.v1 jobs (running -> completed | partial | skipped | failed).
+	// Empty means enrichment has not run.
+	TIStatus  string     `json:"ti_status,omitempty"`
+	TIReason  string     `json:"ti_reason,omitempty"`
 	Artifacts []Artifact `json:"artifacts"`
 }
 

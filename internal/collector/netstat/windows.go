@@ -54,7 +54,7 @@ type mibUDP6RowOwnerPID struct {
 // owning PIDs with process names from a toolhelp snapshot.
 func snapshot() (*Snapshot, error) {
 	processes, _ := processNames() // best effort: missing names are omitted
-	snap := &Snapshot{SchemaVersion: 1, GeneratedAt: time.Now().UTC()}
+	snap := &Snapshot{SchemaVersion: 2, GeneratedAt: time.Now().UTC()}
 	addTCP := func(proto string, local, remote string, lp, rp uint32, state string, pid uint32) {
 		snap.Connections = append(snap.Connections, Connection{
 			Proto: proto, LocalAddr: local, LocalPort: port(lp),

@@ -13,7 +13,7 @@ type Scenario struct {
 // and a collector package on the agent is the whole process.
 var Scenarios = []Scenario{
 	{ID: ScenarioWebshell, Kinds: []Kind{KindUpload, KindApacheLog, KindIISLog}},
-	{ID: ScenarioNetstat, Kinds: []Kind{KindNetstatSnapshot}},
+	{ID: ScenarioNetstat, Kinds: []Kind{KindNetstatSnapshot, KindTIReport}},
 	{ID: ScenarioEventlog, Kinds: []Kind{KindEventLog}},
 }
 

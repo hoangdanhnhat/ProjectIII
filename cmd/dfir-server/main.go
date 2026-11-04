@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"example.com/dfir-collector/internal/protocol"
+	"example.com/dfir-collector/internal/ti"
 	"example.com/dfir-collector/internal/webui"
 )
 
@@ -29,6 +30,11 @@ type server struct {
 	mu                                     sync.Mutex
 	dir, hostID, operatorToken, agentToken string
 	jobs                                   map[string]*protocol.Job
+	// threat-intel state: operator-managed settings and whitelist, shared
+	// VirusTotal client with its persistent verdict cache.
+	settings  *ti.SettingsStore
+	whitelist *ti.WhitelistStore
+	vt        *ti.VTClient
 }
 
 func main() {
@@ -75,6 +81,17 @@ func newServer(dir, host, op, ag string) (*server, error) {
 		}
 	}
 	s := &server{dir: dir, hostID: host, operatorToken: op, agentToken: ag, jobs: make(map[string]*protocol.Job)}
+	settings, err := ti.LoadSettings(dir)
+	if err != nil {
+		return nil, err
+	}
+	whitelist, err := ti.LoadWhitelist(dir)
+	if err != nil {
+		return nil, err
+	}
+	s.settings = settings
+	s.whitelist = whitelist
+	s.vt = ti.NewVTClient(settings, ti.LoadCache(dir))
 	files, err := filepath.Glob(filepath.Join(dir, "jobs", "*.json"))
 	if err != nil {
 		return nil, err
@@ -91,6 +108,16 @@ func newServer(dir, host, op, ag string) (*server, error) {
 		if job.ID == "" || filepath.Base(file) != job.ID+".json" {
 			return nil, fmt.Errorf("invalid job file %s", file)
 		}
+		// An enrichment run that was in flight when the server stopped
+		// cannot be resumed (the worker was in memory); surface that
+		// honestly instead of leaving a stuck "running" status.
+		if job.TIStatus == ti.StatusRunning {
+			job.TIStatus = ti.StatusInterrupted
+			job.TIReason = "enrichment interrupted by server restart; re-run it from the console"
+			if err := s.save(&job); err != nil {
+				return nil, err
+			}
+		}
 		s.jobs[job.ID] = &job
 	}
 	return s, nil
@@ -103,6 +130,11 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("GET /v1/jobs/{id}", s.auth(false, s.get))
 	m.HandleFunc("GET /v1/jobs/{id}/artifacts/{artifact}", s.auth(false, s.download))
 	m.HandleFunc("GET /v1/meta", s.auth(false, s.meta))
+	m.HandleFunc("GET /v1/settings/ti", s.auth(false, s.tiSettingsGET))
+	m.HandleFunc("PUT /v1/settings/ti", s.auth(false, s.tiSettingsPUT))
+	m.HandleFunc("POST /v1/whitelist", s.auth(false, s.whitelistPOST))
+	m.HandleFunc("DELETE /v1/whitelist/{id}", s.auth(false, s.whitelistDELETE))
+	m.HandleFunc("POST /v1/jobs/{id}/ti", s.auth(false, s.tiTriggerPOST))
 	m.HandleFunc("GET /v1/agent/jobs/next", s.auth(true, s.next))
 	m.HandleFunc("POST /v1/agent/jobs/{id}/artifacts/{artifact}", s.auth(true, s.upload))
 	m.HandleFunc("POST /v1/agent/jobs/{id}/result", s.auth(true, s.result))
@@ -392,6 +424,11 @@ func (s *server) result(w http.ResponseWriter, r *http.Request) {
 	}
 	*job = copy
 	s.audit("finish", job.ID, res.Status+": "+res.Reason)
+	// Completed netstat.v1 jobs are enriched automatically (when enabled)
+	// so the console shows VirusTotal verdicts without operator action.
+	if s.settings.Get().VTAutoEnrich {
+		s.tiTriggerLocked(job)
+	}
 	writeJSON(w, 200, job)
 }
 
