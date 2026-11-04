@@ -129,17 +129,22 @@ Connectivity check from Windows if nothing happens:
    API key) and press **Save settings**. The key is stored only on the
    server (`data/ti_config.json`, mode 0600) and never sent back to the
    browser.
-4. Review the **whitelist**: entries (IP, CIDR, domain, `*.wildcard`) are
-   recorded in reports but never sent to VirusTotal. Sensible Windows OS
-   noise (microsoft.com, windowsupdate.com, NCSI probes, `*.local`,
-   `*.arpa`) is pre-seeded — add or remove entries freely.
+4. Review the **Lists** card (two tabs: *Whitelist* and *Blacklist*):
+   entries (IP, CIDR, domain, `*.wildcard`) appear in reports but are never
+   sent to VirusTotal. The **whitelist** marks values as trusted
+   (`whitelisted`); the **blacklist** marks values as known bad
+   (`blacklisted`, shown in red) and **wins if a value is on both lists**.
+   Windows OS noise (microsoft.com, windowsupdate.com, NCSI probes,
+   `*.local`, `*.arpa`) is pre-seeded in the whitelist; the blacklist starts
+   empty. Add, search and remove entries in the dialog, or use the check/ban
+   buttons on any findings row (that also re-runs the check).
 5. Defaults are fine to start: auto-enrich **on**, 4 requests/minute
    (VirusTotal free tier), max 40 checks per collection. Verdicts are
    cached for 24 hours, so repeated indicators cost no quota.
 
 No key yet? The pipeline still runs and classifies everything (public /
-private / whitelisted); verdicts show as *skipped* until you add a key and
-press **Re-run check**.
+private / whitelisted / blacklisted); verdicts show as *skipped* until you
+add a key and press **Re-run check**.
 
 ## Step 5 — run your first collection
 
@@ -222,6 +227,7 @@ Old jobs and evidence in `./data/` are untouched by an update.
 | Job `ti_status` is `skipped` | No VirusTotal key configured — add it in the console and press **Re-run check**. |
 | Job `ti_status` is `partial` | Some VT queries failed (invalid key or HTTP 429) — the reason on the job names the error; wait a minute and re-run. |
 | TI reason contains `x509: certificate signed by unknown authority` | The server image was built before the CA fix (the plain Ubuntu image ships no trust store). Rebuild with `make lab-up`, then press **Re-run check** — no re-collection needed. |
+| An indicator shows `Blacklisted` with no VirusTotal data | Expected: it matches the blacklist, so it is never queried. Remove the entry in the **Blacklist** tab and re-run if that was not intended. |
 | Windows scenarios return `skipped ... not implemented on linux` | The optional Linux `web` container is running and claimed the job: `docker compose stop web`. |
 | Port 8080 already in use | Set `DFIR_CONSOLE_PORT=18080` in `.env`, then `make lab-up` again. |
 | Console unreachable from Windows | Check the Linux firewall and use the LAN IP, not `localhost`. |

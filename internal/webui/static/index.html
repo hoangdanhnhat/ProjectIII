@@ -37,6 +37,7 @@
     <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M11 6H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/></symbol>
     <symbol id="i-network" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M11 7 6 17"/><path d="m13 7 5 10"/><path d="M7 19h10"/></symbol>
     <symbol id="i-server" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="7" rx="2"/><rect x="4" y="13" width="16" height="7" rx="2"/><path d="M8 7.5h.01M8 16.5h.01"/></symbol>
+    <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></symbol>
   </svg>
 
   <header class="topbar">
@@ -51,7 +52,7 @@
           <svg class="icon icon-moon"><use href="#i-moon"/></svg>
           <svg class="icon icon-sun"><use href="#i-sun"/></svg>
         </button>
-        <button id="ti-btn" class="btn btn--ghost" type="button" aria-label="Threat Intel and Whitelist settings" title="Threat Intel &amp; Whitelist" hidden>
+        <button id="ti-btn" class="btn btn--ghost" type="button" aria-label="Threat Intel, whitelist and blacklist settings" title="Threat Intel &amp; Lists" hidden>
           <svg class="icon"><use href="#i-globe"/></svg><span class="btn-label">Threat Intel</span>
         </button>
         <button id="new-btn" class="btn btn--primary" type="button" aria-label="New collection" hidden disabled>
@@ -222,7 +223,7 @@
       <header class="dialog-head">
         <div>
           <div class="eyebrow">Automation</div>
-          <h2 id="ti-title">Threat Intel &amp; Whitelist</h2>
+          <h2 id="ti-title">Threat Intel &amp; Lists</h2>
         </div>
         <button id="ti-close" class="icon-btn" type="button" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button>
       </header>
@@ -264,20 +265,27 @@
 
         <section class="ti-card">
           <div class="ti-card-head">
-            <h3>Whitelist</h3>
-            <span id="wl-count" class="count-pill">0</span>
+            <h3>Indicator lists</h3>
           </div>
-          <p class="hint">Whitelisted IPs, networks, domains and wildcard domains are recorded in reports but never sent to VirusTotal. Examples: <code class="mono">1.1.1.1</code>, <code class="mono">10.0.0.0/8</code>, <code class="mono">example.com</code>, <code class="mono">*.example.com</code>.</p>
+          <div class="tabs tabs--lists" role="group" aria-label="Indicator lists">
+            <button id="list-tab-whitelist" class="tab is-active" type="button" data-list-tab="whitelist" aria-pressed="true">
+              Whitelist <span class="count-pill" id="count-whitelist">0</span>
+            </button>
+            <button id="list-tab-blacklist" class="tab" type="button" data-list-tab="blacklist" aria-pressed="false">
+              Blacklist <span class="count-pill" id="count-blacklist">0</span>
+            </button>
+          </div>
+          <p id="list-hint" class="hint">Whitelisted IPs, networks, domains and wildcard domains are trusted: they appear in reports but are never sent to VirusTotal. Examples: <code class="mono">1.1.1.1</code>, <code class="mono">10.0.0.0/8</code>, <code class="mono">example.com</code>, <code class="mono">*.example.com</code>.</p>
           <div class="wl-add">
-            <input id="wl-value-input" type="text" autocomplete="off" spellcheck="false" placeholder="IP, CIDR, domain or *.wildcard" aria-label="Whitelist value">
-            <input id="wl-note-input" type="text" autocomplete="off" spellcheck="false" placeholder="Note (optional)" aria-label="Whitelist note">
+            <input id="wl-value-input" type="text" autocomplete="off" spellcheck="false" placeholder="IP, CIDR, domain or *.wildcard" aria-label="List value">
+            <input id="wl-note-input" type="text" autocomplete="off" spellcheck="false" placeholder="Note (optional)" aria-label="List note">
             <button id="wl-add-btn" class="btn btn--primary" type="button">Add</button>
           </div>
           <div class="search search--inline">
             <svg class="icon"><use href="#i-search"/></svg>
-            <input id="wl-search-input" type="search" placeholder="Filter whitelist&hellip;" aria-label="Filter whitelist" autocomplete="off">
+            <input id="wl-search-input" type="search" placeholder="Filter list&hellip;" aria-label="Filter indicator list" autocomplete="off">
           </div>
-          <ul id="wl-list" class="wl-list" aria-label="Whitelisted indicators"></ul>
+          <ul id="wl-list" class="wl-list" aria-label="Indicator list entries"></ul>
           <p id="wl-empty" class="mini-empty" hidden>Nothing matches this filter.</p>
           <p id="ti-error-wl" class="form-error" role="alert" hidden></p>
         </section>

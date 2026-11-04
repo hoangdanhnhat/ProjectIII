@@ -105,7 +105,7 @@ func (s *server) runTIEnrichment(jobID string) {
 		return
 	}
 
-	engine := &ti.Engine{Store: s.settings, Whitelist: s.whitelist, VT: s.vt}
+	engine := &ti.Engine{Store: s.settings, Whitelist: s.whitelist, Blacklist: s.blacklist, VT: s.vt}
 	ctx, cancel := context.WithTimeout(context.Background(), maxEnrichmentTime)
 	defer cancel()
 	report, status, reason := engine.Run(ctx, ti.EnrichInput{
@@ -224,6 +224,7 @@ func (s *server) tiSettingsGET(w http.ResponseWriter, r *http.Request) {
 			"max_queries_per_job": st.VTMaxQueries,
 		},
 		"whitelist": map[string]any{"entries": s.whitelist.List()},
+		"blacklist": map[string]any{"entries": s.blacklist.List()},
 	})
 }
 
@@ -278,50 +279,54 @@ func (s *server) tiSettingsPUT(w http.ResponseWriter, r *http.Request) {
 	s.tiSettingsGET(w, r)
 }
 
-// whitelistPOST adds or updates a whitelist entry (IP, CIDR, domain or
-// wildcard domain) with an optional note.
-func (s *server) whitelistPOST(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Value string `json:"value"`
-		Note  string `json:"note"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON", 400)
-		return
-	}
-	if len(req.Note) > 200 {
-		http.Error(w, "note too long (200 chars max)", 400)
-		return
-	}
-	existed := false
-	for _, e := range s.whitelist.List() {
-		if e.Value == strings.TrimSpace(req.Value) {
-			existed = true
-			break
+// listPOST adds or updates an entry (IP, CIDR, domain or wildcard domain)
+// with an optional note in the named list ("whitelist" or "blacklist").
+func (s *server) listPOST(store *ti.ListStore, name string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Value string `json:"value"`
+			Note  string `json:"note"`
 		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+			http.Error(w, "invalid JSON", 400)
+			return
+		}
+		if len(req.Note) > 200 {
+			http.Error(w, "note too long (200 chars max)", 400)
+			return
+		}
+		existed := false
+		for _, e := range store.List() {
+			if e.Value == strings.TrimSpace(req.Value) {
+				existed = true
+				break
+			}
+		}
+		entry, err := store.Add(req.Value, req.Note)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		status := http.StatusCreated
+		if existed {
+			status = http.StatusOK
+		}
+		s.audit(name+"_add", entry.ID, entry.Type+" "+entry.Value)
+		writeJSON(w, status, entry)
 	}
-	entry, err := s.whitelist.Add(req.Value, req.Note)
-	if err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-	status := http.StatusCreated
-	if existed {
-		status = http.StatusOK
-	}
-	s.audit("whitelist_add", entry.ID, entry.Type+" "+entry.Value)
-	writeJSON(w, status, entry)
 }
 
-// whitelistDELETE removes one whitelist entry by ID.
-func (s *server) whitelistDELETE(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !s.whitelist.Remove(id) {
-		http.NotFound(w, r)
-		return
+// listDELETE removes one entry by ID from the named list.
+func (s *server) listDELETE(store *ti.ListStore, name string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		if !store.Remove(id) {
+			http.NotFound(w, r)
+			return
+		}
+		s.audit(name+"_remove", id, "")
+		w.WriteHeader(http.StatusNoContent)
 	}
-	s.audit("whitelist_remove", id, "")
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // tiTriggerPOST re-runs enrichment for one job on operator demand (after

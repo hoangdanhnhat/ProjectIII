@@ -8,6 +8,7 @@ const (
 	ClassPrivate     = "private"  // non-routable address: never queried
 	ClassInternal    = "internal" // hostname that only resolves internally
 	ClassWhitelisted = "whitelisted"
+	ClassBlacklisted = "blacklisted"
 )
 
 // IPClass reports whether an address is globally routable ("public") or

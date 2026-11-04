@@ -88,7 +88,8 @@ func writeVTResponse(w http.ResponseWriter, s Stats) {
 type testEnv struct {
 	engine    *Engine
 	settings  *SettingsStore
-	whitelist *WhitelistStore
+	whitelist *ListStore
+	blacklist *ListStore
 	vt        *VTClient
 	fake      *fakeVT
 	server    *httptest.Server
@@ -117,11 +118,16 @@ func newTestEnv(t *testing.T, key string) *testEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	blacklist, err := LoadBlacklist(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	vt := NewVTClient(settings, LoadCache(dir))
 	return &testEnv{
-		engine:    &Engine{Store: settings, Whitelist: whitelist, VT: vt},
+		engine:    &Engine{Store: settings, Whitelist: whitelist, Blacklist: blacklist, VT: vt},
 		settings:  settings,
 		whitelist: whitelist,
+		blacklist: blacklist,
 		vt:        vt,
 		fake:      fake,
 		server:    server,
@@ -246,6 +252,57 @@ func TestRunQueriesAndVerdicts(t *testing.T) {
 	}
 	if report.VTQueried != 7 {
 		t.Fatalf("report VTQueried = %d, want 7", report.VTQueried)
+	}
+}
+
+// TestRunHonorsBlacklist verifies deny-list semantics: matched IPs and
+// domains get verdict "blacklisted" without ever reaching VirusTotal, the
+// deny list wins over a conflicting allowlist entry (recording both
+// matches), and the summary counts it separately.
+func TestRunHonorsBlacklist(t *testing.T) {
+	env := newTestEnv(t, "test-key")
+	for _, v := range []string{"93.184.216.34", "*.example.net"} {
+		if _, err := env.blacklist.Add(v, "operator knowledge"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Conflict: the value sits in both lists; the blacklist must win.
+	if _, err := env.whitelist.Add("portal.example.com", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.blacklist.Add("portal.example.com", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	report, status, reason := env.engine.Run(context.Background(), EnrichInput{
+		Snapshot: testSnapshot(), JobID: "jb", HostID: "win-lab", SourceArtifact: "ab",
+	})
+	if status != StatusCompleted || reason != "" {
+		t.Fatalf("status = %s (%s), want completed", status, reason)
+	}
+	ip := findIndicator(t, report, "ip", "93.184.216.34")
+	if ip.Verdict != VerdictBlacklisted || ip.BlacklistMatch != "93.184.216.34" || ip.Classification != ClassBlacklisted {
+		t.Fatalf("blacklisted IP = %+v", ip)
+	}
+	if ip.VT != nil {
+		t.Fatalf("blacklisted IP carries VT info, it must not be queried: %+v", ip.VT)
+	}
+	if dom := findIndicator(t, report, "domain", "cdn.example.net"); dom.Verdict != VerdictBlacklisted || dom.BlacklistMatch != "*.example.net" {
+		t.Fatalf("wildcard blacklist domain = %+v", dom)
+	}
+	conflict := findIndicator(t, report, "domain", "portal.example.com")
+	if conflict.Verdict != VerdictBlacklisted || conflict.WhitelistMatch != "portal.example.com" || conflict.BlacklistMatch != "portal.example.com" {
+		t.Fatalf("conflict handling wrong (blacklist must win, both matches recorded): %+v", conflict)
+	}
+	if report.Summary.Blacklisted != 3 {
+		t.Fatalf("summary blacklisted = %d, want 3", report.Summary.Blacklisted)
+	}
+	// Only 1.2.3.4, 5.6.7.8, 8.8.8.8 and bad.example remain queryable.
+	if got := env.fake.hitsCount(); got != 4 {
+		t.Fatalf("fake VT hits = %d, want 4 (blacklisted indicators must be skipped)", got)
+	}
+	if report.VTQueried != 4 {
+		t.Fatalf("report VTQueried = %d, want 4", report.VTQueried)
 	}
 }
 

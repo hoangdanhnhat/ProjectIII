@@ -16,7 +16,8 @@ import (
 	"time"
 )
 
-// Whitelist entry types.
+// Whitelist entry types; the blacklist uses the same value grammar
+// (exact IP, CIDR network, domain, or *.wildcard domain).
 const (
 	EntryIP       = "ip"
 	EntryCIDR     = "cidr"
@@ -24,10 +25,14 @@ const (
 	EntryWildcard = "domain_wildcard"
 )
 
-const whitelistFile = "whitelist.json"
+const (
+	whitelistFile = "whitelist.json"
+	blacklistFile = "blacklist.json"
+)
 
-// Entry is one operator-managed allowlist rule. Whitelisted indicators are
-// recorded in reports (verdict "whitelisted") but never sent to VirusTotal.
+// Entry is one operator-managed list rule. Whitelisted indicators are
+// trusted and blacklisted ones are known bad; neither is sent to
+// VirusTotal.
 type Entry struct {
 	ID        string    `json:"id"`
 	Value     string    `json:"value"` // normalized form
@@ -36,9 +41,9 @@ type Entry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// ParseEntryValue classifies and normalizes a whitelist value: an IP
-// address, a CIDR network (host bits masked), a domain, or a single leading
-// wildcard domain (*.example.com covers example.com and subdomains).
+// ParseEntryValue classifies and normalizes a list value: an IP address, a
+// CIDR network (host bits masked), a domain, or a single leading wildcard
+// domain (*.example.com covers example.com and subdomains).
 func ParseEntryValue(v string) (typ, normalized string, err error) {
 	v = strings.TrimSpace(v)
 	if v == "" {
@@ -116,7 +121,8 @@ func normalizeDomain(s string) (string, error) {
 }
 
 // DefaultEntries seeds the whitelist on first run: Windows OS connectivity
-// noise that would otherwise burn VirusTotal quota on every collection.
+// noise that would otherwise burn VirusTotal quota on every collection. The
+// blacklist starts empty — it holds operator knowledge, never guesses.
 func DefaultEntries() []Entry {
 	seed := []struct{ value, note string }{
 		{"localhost", "loopback name"},
@@ -139,24 +145,37 @@ func DefaultEntries() []Entry {
 	return entries
 }
 
-// WhitelistStore persists entries in the data directory and answers match
-// queries for IPs and domains.
-type WhitelistStore struct {
-	path string
-	mu   sync.RWMutex
-	// match-optimized views rebuilt on every mutation; lists are small.
+// ListStore persists one indicator list (white- or blacklist) in the data
+// directory and answers match queries for IPs and domains.
+type ListStore struct {
+	path    string
+	mu      sync.RWMutex
 	entries []Entry
 }
 
-func LoadWhitelist(dir string) (*WhitelistStore, error) {
-	ws := &WhitelistStore{path: filepath.Join(dir, whitelistFile)}
-	b, err := os.ReadFile(ws.path)
+// LoadWhitelist loads the allowlist, seeding the Windows-noise defaults on
+// first run.
+func LoadWhitelist(dir string) (*ListStore, error) {
+	return loadList(filepath.Join(dir, whitelistFile), DefaultEntries())
+}
+
+// LoadBlacklist loads the deny list; it starts empty.
+func LoadBlacklist(dir string) (*ListStore, error) {
+	return loadList(filepath.Join(dir, blacklistFile), nil)
+}
+
+func loadList(path string, seed []Entry) (*ListStore, error) {
+	ls := &ListStore{path: path}
+	b, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		ws.entries = DefaultEntries()
-		if err := ws.persist(); err != nil {
+		ls.entries = seed
+		if ls.entries == nil {
+			ls.entries = []Entry{}
+		}
+		if err := ls.persist(); err != nil {
 			return nil, err
 		}
-		return ws, nil
+		return ls, nil
 	}
 	if err != nil {
 		return nil, err
@@ -165,71 +184,73 @@ func LoadWhitelist(dir string) (*WhitelistStore, error) {
 		Entries []Entry `json:"entries"`
 	}
 	if err := json.Unmarshal(b, &stored); err != nil {
-		return nil, fmt.Errorf("%s: %w", ws.path, err)
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	ws.entries = stored.Entries
-	if ws.entries == nil {
-		ws.entries = []Entry{}
+	ls.entries = stored.Entries
+	if ls.entries == nil {
+		ls.entries = []Entry{}
 	}
-	return ws, nil
+	return ls, nil
 }
 
 // Add normalizes value and inserts it, or updates the note when the value
 // already exists. Idempotent by design so console double-clicks are safe.
-func (ws *WhitelistStore) Add(value, note string) (Entry, error) {
+func (ls *ListStore) Add(value, note string) (Entry, error) {
 	typ, normalized, err := ParseEntryValue(value)
 	if err != nil {
 		return Entry{}, err
 	}
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
-	for i := range ws.entries {
-		if ws.entries[i].Value == normalized {
-			ws.entries[i].Note = note
-			out := ws.entries[i]
-			if err := ws.persist(); err != nil {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	for i := range ls.entries {
+		if ls.entries[i].Value == normalized {
+			ls.entries[i].Note = note
+			out := ls.entries[i]
+			if err := ls.persist(); err != nil {
 				return Entry{}, err
 			}
 			return out, nil
 		}
 	}
 	entry := Entry{ID: newID(), Value: normalized, Type: typ, Note: note, CreatedAt: time.Now().UTC()}
-	ws.entries = append(ws.entries, entry)
-	if err := ws.persist(); err != nil {
+	ls.entries = append(ls.entries, entry)
+	if err := ls.persist(); err != nil {
 		return Entry{}, err
 	}
 	return entry, nil
 }
 
 // Remove deletes the entry with the given ID.
-func (ws *WhitelistStore) Remove(id string) bool {
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
-	for i := range ws.entries {
-		if ws.entries[i].ID == id {
-			ws.entries = append(ws.entries[:i], ws.entries[i+1:]...)
-			_ = ws.persist()
+func (ls *ListStore) Remove(id string) bool {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	for i := range ls.entries {
+		if ls.entries[i].ID == id {
+			ls.entries = append(ls.entries[:i], ls.entries[i+1:]...)
+			_ = ls.persist()
 			return true
 		}
 	}
 	return false
 }
 
-// List returns entries sorted by value.
-func (ws *WhitelistStore) List() []Entry {
-	ws.mu.RLock()
-	defer ws.mu.RUnlock()
-	out := append([]Entry(nil), ws.entries...)
+// List returns entries sorted by value. The result is never nil, so JSON
+// consumers always see an array.
+func (ls *ListStore) List() []Entry {
+	ls.mu.RLock()
+	defer ls.mu.RUnlock()
+	out := make([]Entry, len(ls.entries))
+	copy(out, ls.entries)
 	sort.Slice(out, func(i, j int) bool { return out[i].Value < out[j].Value })
 	return out
 }
 
 // MatchIP reports the entry covering addr (exact IP or CIDR network).
-func (ws *WhitelistStore) MatchIP(addr netip.Addr) (Entry, bool) {
+func (ls *ListStore) MatchIP(addr netip.Addr) (Entry, bool) {
 	addr = addr.Unmap()
-	ws.mu.RLock()
-	defer ws.mu.RUnlock()
-	for _, e := range ws.entries {
+	ls.mu.RLock()
+	defer ls.mu.RUnlock()
+	for _, e := range ls.entries {
 		switch e.Type {
 		case EntryIP:
 			other, err := netip.ParseAddr(e.Value)
@@ -248,14 +269,14 @@ func (ws *WhitelistStore) MatchIP(addr netip.Addr) (Entry, bool) {
 
 // MatchDomain reports the entry covering name: an exact match or a
 // wildcard entry whose base equals name or is a suffix of it.
-func (ws *WhitelistStore) MatchDomain(name string) (Entry, bool) {
+func (ls *ListStore) MatchDomain(name string) (Entry, bool) {
 	name = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), "."))
 	if name == "" {
 		return Entry{}, false
 	}
-	ws.mu.RLock()
-	defer ws.mu.RUnlock()
-	for _, e := range ws.entries {
+	ls.mu.RLock()
+	defer ls.mu.RUnlock()
+	for _, e := range ls.entries {
 		switch e.Type {
 		case EntryDomain:
 			if e.Value == name {
@@ -274,14 +295,14 @@ func (ws *WhitelistStore) MatchDomain(name string) (Entry, bool) {
 	return Entry{}, false
 }
 
-func (ws *WhitelistStore) persist() error {
+func (ls *ListStore) persist() error {
 	b, err := json.MarshalIndent(struct {
 		Entries []Entry `json:"entries"`
-	}{Entries: ws.entries}, "", "  ")
+	}{Entries: ls.entries}, "", "  ")
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(ws.path, b, 0o600)
+	return writeFileAtomic(ls.path, b, 0o600)
 }
 
 func newID() string {

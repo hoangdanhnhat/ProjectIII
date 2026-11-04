@@ -16,7 +16,8 @@ import (
 // never mutates the snapshot; the raw artifact keeps its original hash.
 type Engine struct {
 	Store     *SettingsStore
-	Whitelist *WhitelistStore
+	Whitelist *ListStore
+	Blacklist *ListStore
 	VT        *VTClient
 }
 
@@ -34,7 +35,7 @@ type EnrichInput struct {
 func (e *Engine) Run(ctx context.Context, in EnrichInput) (report *Report, status, reason string) {
 	settings := e.Store.Get()
 	report = &Report{
-		SchemaVersion:  1,
+		SchemaVersion:  2,
 		JobID:          in.JobID,
 		HostID:         in.HostID,
 		GeneratedAt:    time.Now().UTC(),
@@ -45,8 +46,8 @@ func (e *Engine) Run(ctx context.Context, in EnrichInput) (report *Report, statu
 		Indicators:     []Indicator{},
 	}
 
-	ipIndicators := extractIPs(in.Snapshot, e.Whitelist)
-	domainIndicators := extractDomains(in.Snapshot, e.Whitelist)
+	ipIndicators := extractIPs(in.Snapshot, e.Whitelist, e.Blacklist)
+	domainIndicators := extractDomains(in.Snapshot, e.Whitelist, e.Blacklist)
 	candidates := append(ipIndicators, domainIndicators...)
 	sortCandidates(candidates)
 
@@ -109,9 +110,11 @@ func (e *Engine) Run(ctx context.Context, in EnrichInput) (report *Report, statu
 }
 
 // needsQuery reports whether an indicator still needs a VirusTotal check.
+// Private, whitelisted and blacklisted indicators are classified locally
+// and never leave the server.
 func needsQuery(c *Indicator) bool {
 	switch c.Verdict {
-	case VerdictPrivate, VerdictWhitelisted:
+	case VerdictPrivate, VerdictWhitelisted, VerdictBlacklisted:
 		return false
 	}
 	return true
@@ -138,9 +141,10 @@ func plural(n int, one, many string) string {
 }
 
 // extractIPs builds one indicator per distinct remote address, merging the
-// owning processes, correlated domains, and connection count. Private and
-// whitelisted addresses are classified without a query.
-func extractIPs(snap *netstat.Snapshot, wl *WhitelistStore) []Indicator {
+// owning processes, correlated domains, and connection count. Private,
+// blacklisted and whitelisted addresses are classified without a query;
+// the blacklist wins when a value appears in both lists.
+func extractIPs(snap *netstat.Snapshot, wl, bl *ListStore) []Indicator {
 	type agg struct {
 		processes   map[string]bool
 		domains     map[string]bool
@@ -194,7 +198,18 @@ func extractIPs(snap *netstat.Snapshot, wl *WhitelistStore) []Indicator {
 		if class := IPClass(addr); class == ClassPrivate {
 			ind.Classification = ClassPrivate
 			ind.Verdict = VerdictPrivate
-		} else if entry, ok := wl.MatchIP(addr); ok {
+		} else if entry, ok := matchEntryIP(bl, addr); ok {
+			// The deny list wins over the allowlist: an operator-asserted
+			// "known bad" is triage-critical and is never queried. A
+			// conflicting allowlist match is recorded so the console can
+			// surface the conflict.
+			ind.Classification = ClassBlacklisted
+			ind.Verdict = VerdictBlacklisted
+			ind.BlacklistMatch = entry.Value
+			if wlEntry, ok := matchEntryIP(wl, addr); ok {
+				ind.WhitelistMatch = wlEntry.Value
+			}
+		} else if entry, ok := matchEntryIP(wl, addr); ok {
 			ind.Classification = ClassWhitelisted
 			ind.Verdict = VerdictWhitelisted
 			ind.WhitelistMatch = entry.Value
@@ -212,8 +227,9 @@ func extractIPs(snap *netstat.Snapshot, wl *WhitelistStore) []Indicator {
 
 // extractDomains builds one indicator per distinct cached DNS name.
 // Single-label names and names resolving only to private addresses are
-// internal hostnames and never queried.
-func extractDomains(snap *netstat.Snapshot, wl *WhitelistStore) []Indicator {
+// internal hostnames and never queried; blacklist matches are known bad and
+// never queried either (blacklist wins over whitelist on conflict).
+func extractDomains(snap *netstat.Snapshot, wl, bl *ListStore) []Indicator {
 	if len(snap.DNSCache) == 0 {
 		return nil
 	}
@@ -248,7 +264,14 @@ func extractDomains(snap *netstat.Snapshot, wl *WhitelistStore) []Indicator {
 			ind.Classification = ClassInternal
 			ind.Verdict = VerdictPrivate
 		default:
-			if entry, ok := wl.MatchDomain(name); ok {
+			if entry, ok := matchEntryDomain(bl, name); ok {
+				ind.Classification = ClassBlacklisted
+				ind.Verdict = VerdictBlacklisted
+				ind.BlacklistMatch = entry.Value
+				if wlEntry, ok := matchEntryDomain(wl, name); ok {
+					ind.WhitelistMatch = wlEntry.Value
+				}
+			} else if entry, ok := matchEntryDomain(wl, name); ok {
 				ind.Classification = ClassWhitelisted
 				ind.Verdict = VerdictWhitelisted
 				ind.WhitelistMatch = entry.Value
@@ -260,6 +283,22 @@ func extractDomains(snap *netstat.Snapshot, wl *WhitelistStore) []Indicator {
 		out = append(out, ind)
 	}
 	return out
+}
+
+// matchEntryIP/matchEntryDomain tolerate a nil list so callers that only
+// use one list keep working.
+func matchEntryIP(ls *ListStore, addr netip.Addr) (Entry, bool) {
+	if ls == nil {
+		return Entry{}, false
+	}
+	return ls.MatchIP(addr)
+}
+
+func matchEntryDomain(ls *ListStore, name string) (Entry, bool) {
+	if ls == nil {
+		return Entry{}, false
+	}
+	return ls.MatchDomain(name)
 }
 
 // sortCandidates orders the query queue by triage value: established
@@ -322,6 +361,8 @@ func summarize(indicators []Indicator) Summary {
 	s := Summary{Total: len(indicators)}
 	for _, ind := range indicators {
 		switch ind.Verdict {
+		case VerdictBlacklisted:
+			s.Blacklisted++
 		case VerdictMalicious:
 			s.Malicious++
 		case VerdictSuspicious:

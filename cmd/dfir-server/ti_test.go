@@ -224,6 +224,9 @@ func TestTISettingsEndpoints(t *testing.T) {
 		Whitelist struct {
 			Entries []map[string]any `json:"entries"`
 		} `json:"whitelist"`
+		Blacklist struct {
+			Entries []map[string]any `json:"entries"`
+		} `json:"blacklist"`
 	}
 	resp := op.json("GET", "/v1/settings/ti", nil, &initial)
 	resp.Body.Close()
@@ -235,6 +238,9 @@ func TestTISettingsEndpoints(t *testing.T) {
 	}
 	if len(initial.Whitelist.Entries) == 0 {
 		t.Fatal("seed whitelist entries missing")
+	}
+	if len(initial.Blacklist.Entries) != 0 {
+		t.Fatalf("blacklist should start empty, got %d entries", len(initial.Blacklist.Entries))
 	}
 
 	// Settings require the operator token.
@@ -353,6 +359,86 @@ func TestWhitelistEndpoints(t *testing.T) {
 		t.Fatalf("delete: HTTP %d", resp.StatusCode)
 	}
 	resp = op.do("DELETE", "/v1/whitelist/"+id, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("second delete: HTTP %d", resp.StatusCode)
+	}
+}
+
+// TestBlacklistEndpoints covers the deny-list API and that it stays
+// independent from the allowlist.
+func TestBlacklistEndpoints(t *testing.T) {
+	dir := t.TempDir()
+	s, err := newServer(dir, "lab", "operator-secret", "agent-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(s.routes())
+	defer ts.Close()
+	op := tiClient{t: t, base: ts.URL, token: "operator-secret"}
+
+	var entry map[string]any
+	resp := op.json("POST", "/v1/blacklist", []byte(`{"value":"203.0.113.66","note":"known C2"}`), &entry)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("add: HTTP %d", resp.StatusCode)
+	}
+	if entry["value"] != "203.0.113.66" || entry["type"] != "ip" || entry["note"] != "known C2" {
+		t.Fatalf("entry not stored correctly: %+v", entry)
+	}
+
+	// Duplicate updates the note and returns 200.
+	resp = op.json("POST", "/v1/blacklist", []byte(`{"value":"203.0.113.66","note":"updated"}`), &entry)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || entry["note"] != "updated" {
+		t.Fatalf("duplicate add: HTTP %d note=%v", resp.StatusCode, entry["note"])
+	}
+
+	// Wildcards work and invalid values are rejected.
+	resp = op.json("POST", "/v1/blacklist", []byte(`{"value":"*.evil.example"}`), nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("wildcard rejected: HTTP %d", resp.StatusCode)
+	}
+	for _, bad := range []string{`{"value":""}`, `{"value":"999.1.1.1"}`, `{"value":"x","note":"` + strings.Repeat("n", 201) + `"}`} {
+		resp = op.json("POST", "/v1/blacklist", []byte(bad), nil)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("invalid value %s accepted: HTTP %d", bad, resp.StatusCode)
+		}
+	}
+
+	// The settings payload carries both lists, and entries do not leak
+	// between them.
+	var settings struct {
+		Whitelist struct {
+			Entries []map[string]any `json:"entries"`
+		} `json:"whitelist"`
+		Blacklist struct {
+			Entries []map[string]any `json:"entries"`
+		} `json:"blacklist"`
+	}
+	resp = op.json("GET", "/v1/settings/ti", nil, &settings)
+	resp.Body.Close()
+	if len(settings.Blacklist.Entries) != 2 {
+		t.Fatalf("blacklist entries = %d, want 2", len(settings.Blacklist.Entries))
+	}
+	for _, w := range settings.Whitelist.Entries {
+		if w["value"] == "203.0.113.66" || w["value"] == "*.evil.example" {
+			t.Fatalf("blacklist entry leaked into the whitelist: %+v", w)
+		}
+	}
+
+	id, _ := settings.Blacklist.Entries[0]["id"].(string)
+	if id == "" {
+		t.Fatal("blacklist entries lack IDs")
+	}
+	resp = op.do("DELETE", "/v1/blacklist/"+id, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete: HTTP %d", resp.StatusCode)
+	}
+	resp = op.do("DELETE", "/v1/blacklist/"+id, nil)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("second delete: HTTP %d", resp.StatusCode)
@@ -480,6 +566,40 @@ func TestTIAutoEnrichmentWithVT(t *testing.T) {
 	mu.Unlock()
 	if hits2 != 1 { // first run only; the re-run must skip it
 		t.Fatalf("domain queried %d times after whitelisting, want 1", hits2)
+	}
+
+	// Blacklisting wins: the indicator is never queried again (it was
+	// queried once in the first run) and its verdict flips.
+	resp = op.json("POST", "/v1/blacklist", []byte(`{"value":"portal.example.com","note":"operator knowledge"}`), nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("blacklist: HTTP %d", resp.StatusCode)
+	}
+	resp = op.do("POST", "/v1/jobs/"+job.ID+"/ti", nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("blacklist re-run: HTTP %d", resp.StatusCode)
+	}
+	final := waitTI(t, ts, job.ID)
+	if final.TIStatus != "completed" {
+		t.Fatalf("blacklist re-run status = %s (%s)", final.TIStatus, final.TIReason)
+	}
+	report3 := downloadTIReport(t, ts, final)
+	if got := reportVerdict(t, report3, "domain", "portal.example.com"); got != "blacklisted" {
+		t.Fatalf("blacklisted domain verdict = %s, want blacklisted", got)
+	}
+	if summary, ok := report3["summary"].(map[string]any); ok {
+		if n, _ := summary["blacklisted"].(float64); n != 1 {
+			t.Fatalf("summary blacklisted = %v, want 1", summary["blacklisted"])
+		}
+	} else {
+		t.Fatalf("report lacks summary: %v", report3)
+	}
+	mu.Lock()
+	hits3 := requested["/api/v3/domains/portal.example.com"]
+	mu.Unlock()
+	if hits3 != 1 { // from the first run only; deny-listed values are skipped
+		t.Fatalf("blacklisted domain queried %d times, want 1", hits3)
 	}
 
 	// The manifest references exactly one ti_report and the file verifies.

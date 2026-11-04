@@ -1580,6 +1580,10 @@ dialog::backdrop {
   color: var(--text-soft);
 }
 
+.tabs--lists {
+  margin-bottom: 2px;
+}
+
 .wl-add {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
@@ -1938,6 +1942,12 @@ dialog::backdrop {
   border-color: var(--violet);
   background: var(--violet-bg);
   color: var(--violet);
+}
+
+.wl-mini--ban:hover {
+  border-color: var(--red);
+  background: var(--red-bg);
+  color: var(--red);
 }
 
 .wl-mini .icon {

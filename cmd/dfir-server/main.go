@@ -30,10 +30,11 @@ type server struct {
 	mu                                     sync.Mutex
 	dir, hostID, operatorToken, agentToken string
 	jobs                                   map[string]*protocol.Job
-	// threat-intel state: operator-managed settings and whitelist, shared
-	// VirusTotal client with its persistent verdict cache.
+	// threat-intel state: operator-managed settings and white/blacklists,
+	// shared VirusTotal client with its persistent verdict cache.
 	settings  *ti.SettingsStore
-	whitelist *ti.WhitelistStore
+	whitelist *ti.ListStore
+	blacklist *ti.ListStore
 	vt        *ti.VTClient
 }
 
@@ -89,8 +90,13 @@ func newServer(dir, host, op, ag string) (*server, error) {
 	if err != nil {
 		return nil, err
 	}
+	blacklist, err := ti.LoadBlacklist(dir)
+	if err != nil {
+		return nil, err
+	}
 	s.settings = settings
 	s.whitelist = whitelist
+	s.blacklist = blacklist
 	s.vt = ti.NewVTClient(settings, ti.LoadCache(dir))
 	files, err := filepath.Glob(filepath.Join(dir, "jobs", "*.json"))
 	if err != nil {
@@ -132,8 +138,10 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("GET /v1/meta", s.auth(false, s.meta))
 	m.HandleFunc("GET /v1/settings/ti", s.auth(false, s.tiSettingsGET))
 	m.HandleFunc("PUT /v1/settings/ti", s.auth(false, s.tiSettingsPUT))
-	m.HandleFunc("POST /v1/whitelist", s.auth(false, s.whitelistPOST))
-	m.HandleFunc("DELETE /v1/whitelist/{id}", s.auth(false, s.whitelistDELETE))
+	m.HandleFunc("POST /v1/whitelist", s.auth(false, s.listPOST(s.whitelist, "whitelist")))
+	m.HandleFunc("DELETE /v1/whitelist/{id}", s.auth(false, s.listDELETE(s.whitelist, "whitelist")))
+	m.HandleFunc("POST /v1/blacklist", s.auth(false, s.listPOST(s.blacklist, "blacklist")))
+	m.HandleFunc("DELETE /v1/blacklist/{id}", s.auth(false, s.listDELETE(s.blacklist, "blacklist")))
 	m.HandleFunc("POST /v1/jobs/{id}/ti", s.auth(false, s.tiTriggerPOST))
 	m.HandleFunc("GET /v1/agent/jobs/next", s.auth(true, s.next))
 	m.HandleFunc("POST /v1/agent/jobs/{id}/artifacts/{artifact}", s.auth(true, s.upload))

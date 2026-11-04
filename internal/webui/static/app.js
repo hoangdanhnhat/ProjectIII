@@ -47,6 +47,7 @@ const TI_STATUS = {
 };
 
 const VERDICTS = {
+  blacklisted: { label: "Blacklisted", tone: "red" },
   malicious: { label: "Malicious", tone: "red" },
   suspicious: { label: "Suspicious", tone: "amber" },
   clean: { label: "Clean", tone: "green" },
@@ -79,6 +80,7 @@ const state = {
   tiTab: "findings",
   tiQuery: "",
   tiSettings: null,
+  tiList: "whitelist",
   wlQuery: "",
 };
 
@@ -142,7 +144,9 @@ const ui = {
   vtMaxInput: $("vt-max-input"),
   tiSaveBtn: $("ti-save-btn"),
   tiError: $("ti-error"),
-  wlCount: $("wl-count"),
+  countWhitelist: $("count-whitelist"),
+  countBlacklist: $("count-blacklist"),
+  listHint: $("list-hint"),
   wlValueInput: $("wl-value-input"),
   wlNoteInput: $("wl-note-input"),
   wlAddBtn: $("wl-add-btn"),
@@ -1031,6 +1035,7 @@ function reportSummaryFor(job, reportArtifact) {
   if (!report || !report.summary) return null;
   const s = report.summary;
   const items = [
+    ["blacklisted", s.blacklisted],
     ["malicious", s.malicious],
     ["suspicious", s.suspicious],
     ["clean", s.clean],
@@ -1084,8 +1089,10 @@ function flaggedByValue(report) {
   const flagged = new Map(); // value -> tone
   if (!report || !Array.isArray(report.indicators)) return flagged;
   for (const ind of report.indicators) {
-    if (ind.verdict === "malicious" || ind.verdict === "suspicious") {
-      flagged.set(String(ind.value), ind.verdict === "malicious" ? "red" : "amber");
+    if (ind.verdict === "blacklisted" || ind.verdict === "malicious") {
+      flagged.set(String(ind.value), "red");
+    } else if (ind.verdict === "suspicious") {
+      flagged.set(String(ind.value), "amber");
     }
   }
   return flagged;
@@ -1121,7 +1128,7 @@ function findingsTable(job, report, snapshot, reportArtifact) {
     if (!matchesTIQuery(parts)) return;
     shown++;
     const vt = ind.vt || {};
-    const tone = ind.verdict === "malicious" ? "red" : ind.verdict === "suspicious" ? "amber" : null;
+    const tone = ind.verdict === "blacklisted" || ind.verdict === "malicious" ? "red" : ind.verdict === "suspicious" ? "amber" : null;
     const row = el("div", { class: "trow", "data-tone": tone || undefined },
       el("div", { class: "cell" },
         el("div", { class: "cell-main" },
@@ -1131,9 +1138,13 @@ function findingsTable(job, report, snapshot, reportArtifact) {
         (ind.domains || []).length
           ? el("div", { class: "cell-sub" }, ...ind.domains.map((d) => el("span", { class: "mono", text: d })))
           : "",
-        ind.whitelist_match
-          ? el("div", { class: "cell-sub" }, "via " + ind.whitelist_match)
-          : ""
+        ind.blacklist_match
+          ? el("div", { class: "cell-sub" },
+              "blacklisted via " + ind.blacklist_match +
+              (ind.whitelist_match ? " · also whitelisted via " + ind.whitelist_match : ""))
+          : ind.whitelist_match
+            ? el("div", { class: "cell-sub" }, "whitelisted via " + ind.whitelist_match)
+            : ""
       ),
       el("div", { class: "cell" }, verdictChip(ind.verdict)),
       el("div", { class: "cell" },
@@ -1150,7 +1161,7 @@ function findingsTable(job, report, snapshot, reportArtifact) {
         vt.link
           ? el("a", { class: "vt-link", href: vt.link, target: "_blank", rel: "noopener noreferrer", "aria-label": "Open VirusTotal report for " + ind.value, title: "VirusTotal report" }, icon("external"))
           : "",
-        canWhitelistIndicator(ind)
+        canListIndicator(ind)
           ? el("button", {
               class: "wl-mini",
               type: "button",
@@ -1158,6 +1169,15 @@ function findingsTable(job, report, snapshot, reportArtifact) {
               "aria-label": "Whitelist " + ind.value,
               title: "Whitelist " + ind.value + " and re-run the check",
             }, icon("check"))
+          : "",
+        canListIndicator(ind)
+          ? el("button", {
+              class: "wl-mini wl-mini--ban",
+              type: "button",
+              "data-ti-bl": String(index),
+              "aria-label": "Blacklist " + ind.value,
+              title: "Blacklist " + ind.value + " and re-run the check",
+            }, icon("ban"))
           : ""
       )
     );
@@ -1168,7 +1188,7 @@ function findingsTable(job, report, snapshot, reportArtifact) {
   return wrap;
 }
 
-function canWhitelistIndicator(ind) {
+function canListIndicator(ind) {
   return ind.classification === "public" || ind.verdict === "skipped" || ind.verdict === "unrated" ||
     ind.verdict === "clean" || ind.verdict === "suspicious" || ind.verdict === "malicious";
 }
@@ -1292,6 +1312,21 @@ async function whitelistFromFindings(jobId, indicator) {
   }
 }
 
+async function blacklistFromFindings(jobId, indicator) {
+  try {
+    const response = await api("/v1/blacklist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: indicator.value, note: "blacklisted from collection " + jobId }),
+    });
+    await response.json();
+    toast("Blacklisted " + indicator.value + " — re-running the check.", "success", ui.sheetToasts);
+    await rerunTI(jobId);
+  } catch (err) {
+    if (err.status !== 401) toast(err.message || "Could not blacklist " + indicator.value + ".", "error", ui.sheetToasts);
+  }
+}
+
 function onDetailBodyClick(event) {
   const tab = event.target.closest("[data-ti-tab]");
   if (tab) {
@@ -1310,6 +1345,13 @@ function onDetailBodyClick(event) {
     const { jobId, indicators } = state.reportForDetail;
     const indicator = indicators[Number(wl.dataset.tiWl)];
     if (indicator) whitelistFromFindings(jobId, indicator);
+    return;
+  }
+  const bl = event.target.closest("[data-ti-bl]");
+  if (bl && state.reportForDetail) {
+    const { jobId, indicators } = state.reportForDetail;
+    const indicator = indicators[Number(bl.dataset.tiBl)];
+    if (indicator) blacklistFromFindings(jobId, indicator);
   }
 }
 
@@ -1357,15 +1399,52 @@ function renderTISettings() {
   ui.vtAutoInput.checked = !!vt.auto_enrich;
   ui.vtRateInput.value = String(vt.rate_per_min || 4);
   ui.vtMaxInput.value = String(vt.max_queries_per_job || 40);
-  renderWhitelist();
+  renderLists();
 }
 
-function renderWhitelist() {
+// listEntries returns the entries of one list from the loaded settings.
+function listEntries(name) {
   const settings = state.tiSettings;
-  const entries = settings && settings.whitelist && Array.isArray(settings.whitelist.entries)
-    ? settings.whitelist.entries
-    : [];
-  ui.wlCount.textContent = String(entries.length);
+  const list = settings && settings[name];
+  return list && Array.isArray(list.entries) ? list.entries : [];
+}
+
+function listEndpoint() {
+  return state.tiList === "blacklist" ? "/v1/blacklist" : "/v1/whitelist";
+}
+
+function listLabel() {
+  return state.tiList === "blacklist" ? "blacklist" : "whitelist";
+}
+
+function setActiveList(name) {
+  state.tiList = name === "blacklist" ? "blacklist" : "whitelist";
+  showWLError("");
+  renderLists();
+}
+
+function renderLists() {
+  const whitelist = listEntries("whitelist");
+  const blacklist = listEntries("blacklist");
+  ui.countWhitelist.textContent = String(whitelist.length);
+  ui.countBlacklist.textContent = String(blacklist.length);
+
+  for (const tab of [document.getElementById("list-tab-whitelist"), document.getElementById("list-tab-blacklist")]) {
+    if (!tab) continue;
+    const active = tab.dataset.listTab === state.tiList;
+    tab.classList.toggle("is-active", active);
+    tab.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+
+  const black = state.tiList === "blacklist";
+  ui.listHint.textContent = black
+    ? "Blacklisted IPs, networks, domains and wildcard domains are known bad: they appear in reports with verdict Blacklisted and are never sent to VirusTotal. The blacklist wins when a value is on both lists."
+    : "Whitelisted IPs, networks, domains and wildcard domains are trusted: they appear in reports but are never sent to VirusTotal. Examples: 1.1.1.1, 10.0.0.0/8, example.com, *.example.com.";
+  ui.wlValueInput.placeholder = black
+    ? "Known-bad IP, CIDR, domain or *.wildcard"
+    : "IP, CIDR, domain or *.wildcard";
+
+  const entries = black ? blacklist : whitelist;
   const query = state.wlQuery;
   const visible = entries.filter((entry) => !query || String(entry.value).toLowerCase().includes(query));
   const rows = visible.map((entry) => el("li", { class: "wl-row" },
@@ -1379,7 +1458,7 @@ function renderWhitelist() {
       class: "icon-btn icon-btn--danger",
       type: "button",
       "data-wl-remove": entry.id,
-      "aria-label": "Remove " + entry.value + " from the whitelist",
+      "aria-label": "Remove " + entry.value + " from the " + listLabel(),
       title: "Remove",
     }, icon("trash"))
   ));
@@ -1387,6 +1466,8 @@ function renderWhitelist() {
   ui.wlEmpty.hidden = visible.length > 0;
   if (entries.length && visible.length === 0) {
     ui.wlEmpty.textContent = "Nothing matches this filter.";
+  } else if (black) {
+    ui.wlEmpty.textContent = "The blacklist is empty — all public indicators go through VirusTotal.";
   } else {
     ui.wlEmpty.textContent = "The whitelist is empty — every public indicator will be checked.";
   }
@@ -1423,7 +1504,7 @@ async function saveTISettings(event) {
   }
 }
 
-async function addWhitelistEntry() {
+async function addListEntry() {
   if (ui.wlAddBtn.disabled) return;
   showWLError("");
   const value = ui.wlValueInput.value.trim();
@@ -1433,9 +1514,11 @@ async function addWhitelistEntry() {
     ui.wlValueInput.focus();
     return;
   }
+  const endpoint = listEndpoint();
+  const label = state.tiList === "blacklist" ? "Blacklisted" : "Whitelisted";
   ui.wlAddBtn.disabled = true;
   try {
-    const response = await api("/v1/whitelist", {
+    const response = await api(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value, note }),
@@ -1443,7 +1526,7 @@ async function addWhitelistEntry() {
     await response.json();
     ui.wlValueInput.value = "";
     ui.wlNoteInput.value = "";
-    toast("Whitelisted " + value, "success");
+    toast(label + " " + value, "success");
     await refreshTISettings();
   } catch (err) {
     if (err.status !== 401) showWLError(err.message || "Could not add the entry.");
@@ -1452,10 +1535,11 @@ async function addWhitelistEntry() {
   }
 }
 
-async function removeWhitelistEntry(id) {
+async function removeListEntry(id) {
+  const label = listLabel();
   try {
-    const response = await api("/v1/whitelist/" + encodeURIComponent(id), { method: "DELETE" });
-    if (response.status === 204) toast("Removed from the whitelist.", "success");
+    const response = await api(listEndpoint() + "/" + encodeURIComponent(id), { method: "DELETE" });
+    if (response.status === 204) toast("Removed from the " + label + ".", "success");
     await refreshTISettings();
   } catch (err) {
     if (err.status !== 401) toast(err.message || "Could not remove the entry.", "error");
@@ -1632,22 +1716,25 @@ function bindEvents() {
     ui.vtKeyReveal.textContent = reveal ? "Hide" : "Show";
     ui.vtKeyReveal.setAttribute("aria-pressed", reveal ? "true" : "false");
   });
-  ui.wlAddBtn.addEventListener("click", addWhitelistEntry);
+  for (const tab of [document.getElementById("list-tab-whitelist"), document.getElementById("list-tab-blacklist")]) {
+    if (tab) tab.addEventListener("click", () => setActiveList(tab.dataset.listTab));
+  }
+  ui.wlAddBtn.addEventListener("click", addListEntry);
   const onWlEnter = (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
-      addWhitelistEntry();
+      addListEntry();
     }
   };
   ui.wlValueInput.addEventListener("keydown", onWlEnter);
   ui.wlNoteInput.addEventListener("keydown", onWlEnter);
   ui.wlSearchInput.addEventListener("input", () => {
     state.wlQuery = ui.wlSearchInput.value.trim().toLowerCase();
-    renderWhitelist();
+    renderLists();
   });
   ui.wlList.addEventListener("click", (event) => {
     const button = event.target.closest("[data-wl-remove]");
-    if (button) removeWhitelistEntry(button.dataset.wlRemove);
+    if (button) removeListEntry(button.dataset.wlRemove);
   });
 
   window.addEventListener("hashchange", () => {

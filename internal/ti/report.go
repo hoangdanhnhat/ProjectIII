@@ -8,6 +8,7 @@ import (
 
 // Verdict values for indicators.
 const (
+	VerdictBlacklisted = "blacklisted" // matched the operator deny list; never queried
 	VerdictMalicious   = "malicious"   // 2+ engines flag it
 	VerdictSuspicious  = "suspicious"  // exactly 1 engine flags it
 	VerdictClean       = "clean"       // analyzed, no engine flags it
@@ -36,6 +37,7 @@ type Indicator struct {
 	Classification string   `json:"classification"`
 	Verdict        string   `json:"verdict"`
 	WhitelistMatch string   `json:"whitelist_match,omitempty"`
+	BlacklistMatch string   `json:"blacklist_match,omitempty"`
 	Domains        []string `json:"domains,omitempty"`
 	Processes      []string `json:"processes,omitempty"`
 	Connections    int      `json:"connections,omitempty"`
@@ -58,6 +60,7 @@ type VTInfo struct {
 // Summary counts verdicts for the report banner.
 type Summary struct {
 	Total       int `json:"total"`
+	Blacklisted int `json:"blacklisted"`
 	Malicious   int `json:"malicious"`
 	Suspicious  int `json:"suspicious"`
 	Clean       int `json:"clean"`
@@ -103,13 +106,13 @@ func VerdictFromStats(s Stats) string {
 }
 
 // RenderReport serializes a report with deterministic indicator ordering:
-// severity first (malicious, suspicious, unrated, skipped, clean,
-// whitelisted, private), then type, then value.
+// severity first (blacklisted, malicious, suspicious, unrated, skipped,
+// clean, whitelisted, private), then type, then value.
 func RenderReport(r *Report) []byte {
 	if r.Indicators == nil {
 		r.Indicators = []Indicator{}
 	}
-	rank := map[string]int{VerdictMalicious: 0, VerdictSuspicious: 1, VerdictUnrated: 2, VerdictSkipped: 3, VerdictClean: 4, VerdictWhitelisted: 5, VerdictPrivate: 6}
+	rank := map[string]int{VerdictBlacklisted: 0, VerdictMalicious: 1, VerdictSuspicious: 2, VerdictUnrated: 3, VerdictSkipped: 4, VerdictClean: 5, VerdictWhitelisted: 6, VerdictPrivate: 7}
 	sort.SliceStable(r.Indicators, func(i, j int) bool {
 		a, b := r.Indicators[i], r.Indicators[j]
 		if rank[a.Verdict] != rank[b.Verdict] {

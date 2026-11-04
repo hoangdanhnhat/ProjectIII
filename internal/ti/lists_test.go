@@ -147,3 +147,55 @@ func TestWhitelistPersistsAndReloads(t *testing.T) {
 		t.Fatalf("entry details lost across reload: %+v", found)
 	}
 }
+
+// TestBlacklistStartsEmptyAndPersists pins the differences from the
+// whitelist: no seed entries, and its own file.
+func TestBlacklistStartsEmptyAndPersists(t *testing.T) {
+	dir := t.TempDir()
+	bl, err := LoadBlacklist(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(bl.List()); got != 0 {
+		t.Fatalf("blacklist seeded with %d entries, want 0", got)
+	}
+	if bl.List() == nil {
+		t.Fatal("empty blacklist List() returned nil; JSON would encode null instead of []")
+	}
+	if _, err := bl.Add("203.0.113.66", "known C2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bl.Add("*.evil.example", "phishing"); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := LoadBlacklist(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reloaded.MatchDomain("mail.evil.example"); !ok {
+		t.Fatal("wildcard blacklist entry lost across reload")
+	}
+	if e, ok := reloaded.MatchIP(mustAddr(t, "203.0.113.66")); !ok || e.Note != "known C2" {
+		t.Fatalf("blacklist IP entry lost or note missing: %+v", e)
+	}
+	// The whitelist file must stay independent of the blacklist file.
+	if _, err := LoadWhitelist(dir); err != nil {
+		t.Fatal(err)
+	}
+	whitelist, err := LoadWhitelist(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := whitelist.MatchDomain("mail.evil.example"); ok {
+		t.Fatal("blacklist entry leaked into the whitelist")
+	}
+}
+
+func mustAddr(t *testing.T, s string) netip.Addr {
+	t.Helper()
+	addr, err := netip.ParseAddr(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return addr
+}
