@@ -231,6 +231,7 @@ Old jobs and evidence in `./data/` are untouched by an update.
 | Windows scenarios return `skipped ... not implemented on linux` | The optional Linux `web` container is running and claimed the job: `docker compose stop web`. |
 | Port 8080 already in use | Set `DFIR_CONSOLE_PORT=18080` in `.env`, then `make lab-up` again. |
 | Console unreachable from Windows | Check the Linux firewall and use the LAN IP, not `localhost`. |
+| Want to try the new React console | Open `http://<linux-ip>:8080/next/` — the legacy console stays at `/` until cutover. |
 
 ## Teardown and reset
 

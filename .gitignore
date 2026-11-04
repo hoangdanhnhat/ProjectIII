@@ -3,3 +3,8 @@
 *.test
 .env
 deploy/docker/certs/
+
+# React console: dependencies, build output (except the embed marker).
+web/node_modules/
+internal/webui/dist/*
+!internal/webui/dist/.embed

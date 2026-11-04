@@ -13,8 +13,16 @@ SHELL := /bin/sh
 ENV_FILE := .env
 BASE := http://localhost:8080
 SCENARIO ?= webshell.v1
+NODE_IMAGE ?= node:22-alpine
 
-.PHONY: help lab-init lab-up lab-up-web lab-down lab-logs lab-traffic lab-job lab-status lab-clean
+# npm runs inside Node 22 so no host toolchain is needed; the repository
+# root is mounted (Vite writes ../internal/webui/dist) and files stay owned
+# by the invoking user.
+WEB_NPM = docker run --rm -u $$(id -u):$$(id -g) -v "$(CURDIR):/repo" -w /repo/web \
+	-e HOME=/tmp -e npm_config_cache=/tmp/npm-cache $(NODE_IMAGE) npm
+
+.PHONY: help lab-init lab-up lab-up-web lab-down lab-logs lab-traffic lab-job lab-status lab-clean \
+	web-install web-build web-test web-lint web-check web-dev
 
 help: ## show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*## "}{printf "  %-12s %s\n", $$1, $$2}'
@@ -79,3 +87,28 @@ lab-clean: ## stop the lab and delete data/, .env and leftover certs (full reset
 	  -c 'rm -rf /data/artifacts /data/jobs /data/audit.jsonl'
 	rm -rf data .env deploy/docker/certs
 	echo "lab reset. start over with: make lab-up"
+
+# --- front-end (React console in web/) --------------------------------------
+
+web-install: ## install front-end dependencies (npm ci)
+	$(WEB_NPM) ci
+
+web-build: ## build the React console into internal/webui/dist
+	$(WEB_NPM) run build
+
+web-test: ## run front-end unit tests
+	$(WEB_NPM) test
+
+web-lint: ## typecheck and lint the front-end
+	$(WEB_NPM) run typecheck
+	$(WEB_NPM) run lint
+
+web-check: ## typecheck, lint and test the front-end
+	$(WEB_NPM) run check
+
+web-dev: ## Vite dev server on :5173 (proxies /v1 to localhost:8080)
+	docker run --rm -u $$(id -u):$$(id -g) -v "$(CURDIR):/repo" -w /repo/web \
+	  -e HOME=/tmp -e npm_config_cache=/tmp/npm-cache \
+	  -e VITE_API_PROXY=http://host.docker.internal:8080 \
+	  --add-host=host.docker.internal:host-gateway \
+	  -p 5173:5173 $(NODE_IMAGE) npm run dev -- --host 0.0.0.0

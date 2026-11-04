@@ -4,3 +4,4 @@ data/
 bin/
 deploy/docker/certs/
 *.test
+web/node_modules

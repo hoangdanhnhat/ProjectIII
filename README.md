@@ -3,6 +3,8 @@
 Prototype consisting of an orchestrating server and a **Windows agent**, both written in Go. The server runs in Docker on a Linux machine (or anywhere Go builds); the agent runs on the Windows endpoint being monitored and connects **outbound only** — it never listens for inbound connections. Current scope: Windows 10/11 64-bit endpoints, scenarios `netstat.v1`, `eventlog.v1` and `webshell.v1`, plus automated **Threat Intelligence triage** of network connections via VirusTotal.
 
 > **Setting this up from scratch?** Follow the step-by-step guide in [SETUP.md](SETUP.md) — server, Windows agent, VirusTotal key and first collection, including troubleshooting.
+>
+> **Working on the code?** See [AGENTS.md](AGENTS.md) for the repository layout, commands, front-end conventions and invariants.
 
 For `netstat.v1` the agent snapshots the TCP/UDP connection tables with owning processes **and the DNS client resolver cache** (read via `dnsapi.dll` with cache-only queries, generating zero network traffic; a `Get-DnsClientCache` fallback covers restricted hosts). Cached `A`/`AAAA`/`CNAME` records are correlated to connection remote addresses, so each connection records the domain name(s) it reached. When the job finishes, the server automatically triages the snapshot: public IPs and external domains (private/loopback/link-local addresses and whitelisted values are excluded) are checked against VirusTotal, and the verdicts land in the job as a `ti_report` artifact viewable in the web console. The result is **data for an investigation**, not an assertion of compromise.
 
@@ -123,6 +125,21 @@ Without an API key the pipeline still runs and produces the classification-only 
 5. For finished `netstat.v1` jobs the server runs the TI enrichment described above; the job manifest records the enrichment status (`ti_status`: `running` → `completed` / `partial` / `skipped` / `failed`) and reason.
 
 Operator TI endpoints: `GET/PUT /v1/settings/ti`, `POST /v1/whitelist`, `DELETE /v1/whitelist/{id}`, `POST /v1/blacklist`, `DELETE /v1/blacklist/{id}`, and `POST /v1/jobs/{id}/ti` (re-run).
+
+## Front-end development
+
+The console is a React 19 + TypeScript app (`web/`) built with Vite and embedded into the server binary via `go:embed`. During the migration it is served at **`/next/`** while the legacy console keeps the root URL.
+
+```bash
+make web-install     # npm ci (runs in a Node 22 container)
+make web-build       # build into internal/webui/dist, then rebuild the server
+make web-dev         # Vite dev server on :5173 with /v1 proxied to :8080
+make web-check       # typescript + ESLint + Stylelint + Vitest
+```
+
+- Dev-only component gallery: open `http://localhost:5173/next/?gallery` (light and dark).
+- The bundle is written to `internal/webui/dist`; `make lab-up` also builds it inside Docker.
+- Layout, conventions and recipes: [AGENTS.md](AGENTS.md).
 
 Lab limits: at most 10 MiB per file, 256 files per job from the upload directory and 4 newest logs per job (260 artifacts total; older logs are dropped and noted in `reason`, which does not count as an error; exceeding the file limits is recorded as `partial`). Logs are captured whole when ≤ 10 MiB; **there is no `since`-based log tailoring yet**. Data on a running system may change before or after collection; the manifest describes the snapshot received and does not prove the state of the source at any earlier moment.
 

@@ -1,5 +1,13 @@
-# DFIR/CA evidence collector - Docker lab images.
-#
+# --- front-end bundle (React console) ---------------------------------------
+
+FROM node:22-alpine AS console
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+# --- Go binaries --------------------------------------------------------------
 # One builder stage compiles and tests both binaries; two final targets are
 # selected by compose.yaml (or manually):
 #
@@ -11,6 +19,8 @@
 FROM golang:1.24 AS builder
 WORKDIR /src
 COPY . .
+# Vite builds straight into internal/webui/dist (see web/vite.config.ts).
+COPY --from=console /internal/webui/dist ./internal/webui/dist
 RUN go test ./... \
  && go build -o /out/dfir-server ./cmd/dfir-server \
  && go build -o /out/dfir-agent ./cmd/dfir-agent

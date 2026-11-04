@@ -1,0 +1,76 @@
+/* Design tokens: the only place literal colors are allowed.
+   Color carries meaning only (risk/success); everything else is neutral.
+   Contrast for the documented pairs is verified by src/test/tokens.test.ts. */
+
+:root {
+  color-scheme: light;
+
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-2: #fafbfc;
+  --surface-3: #f2f4f6;
+
+  --border: #e6e8eb;
+  --border-strong: #d5d9df;
+
+  --text: #17181a;
+  --text-soft: #4a4f57;
+  --muted: #6b7280;
+  --link: #35507d;
+
+  --btn-primary-bg: #1f2328;
+  --btn-primary-text: #ffffff;
+  --btn-primary-hover: #000000;
+
+  --danger: #a33a32;
+  --danger-bg: #fbeeec;
+  --warn: #8a5f10;
+  --warn-bg: #fbf3e2;
+  --ok: #2f6b4f;
+  --ok-bg: #eaf4ee;
+
+  --ring: rgba(23, 24, 26, 0.3);
+  --overlay: rgba(12, 14, 16, 0.4);
+  --shadow: 0 1px 2px rgba(16, 20, 24, 0.05);
+  --shadow-lg: 0 16px 48px rgba(9, 12, 16, 0.16);
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0f1113;
+  --surface: #16191c;
+  --surface-2: #1b1f23;
+  --surface-3: #20252a;
+
+  --border: #262b30;
+  --border-strong: #343b42;
+
+  --text: #e9ecef;
+  --text-soft: #b9c0c7;
+  --muted: #8b949e;
+  --link: #9db4d6;
+
+  --btn-primary-bg: #e9ecef;
+  --btn-primary-text: #17181a;
+  --btn-primary-hover: #ffffff;
+
+  --danger: #e08a84;
+  --danger-bg: #2a1a18;
+  --warn: #d9a95c;
+  --warn-bg: #2a2417;
+  --ok: #7fbf9e;
+  --ok-bg: #17251d;
+
+  --ring: rgba(233, 236, 239, 0.35);
+  --overlay: rgba(0, 0, 0, 0.6);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.6);
+}

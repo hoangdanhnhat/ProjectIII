@@ -1,0 +1,19 @@
+{
+  "extends": ["stylelint-config-standard"],
+  "rules": {
+    "color-no-hex": true,
+    "selector-class-pattern": null,
+    "custom-property-pattern": null,
+    "color-function-notation": null,
+    "alpha-value-notation": null,
+    "media-feature-range-notation": null,
+    "declaration-property-value-no-unknown": null,
+    "no-descending-specificity": null,
+    "value-keyword-case": null,
+    "rule-empty-line-before": null,
+    "comment-empty-line-before": null,
+    "at-rule-empty-line-before": null,
+    "declaration-empty-line-before": null
+  },
+  "ignoreFiles": ["src/styles/tokens.css"]
+}
