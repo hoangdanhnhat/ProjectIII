@@ -7,10 +7,18 @@ interface TopBarProps {
   onToggleTheme: () => void;
   connected: boolean;
   hostId?: string;
+  onOpenSettings: () => void;
   onDisconnect: () => void;
 }
 
-export function TopBar({ theme, onToggleTheme, connected, hostId, onDisconnect }: TopBarProps) {
+export function TopBar({
+  theme,
+  onToggleTheme,
+  connected,
+  hostId,
+  onOpenSettings,
+  onDisconnect,
+}: TopBarProps) {
   const themeLabel = theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
 
   return (
@@ -26,6 +34,11 @@ export function TopBar({ theme, onToggleTheme, connected, hostId, onDisconnect }
               <span className="status-dot" data-state="ok" />
               {hostId}
             </span>
+          ) : null}
+          {connected ? (
+            <Button variant="ghost" small icon="key" onClick={onOpenSettings}>
+              Threat Intel
+            </Button>
           ) : null}
           <button
             type="button"

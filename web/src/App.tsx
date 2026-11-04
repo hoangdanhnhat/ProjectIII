@@ -1,7 +1,8 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useState } from "react";
 import { TopBar } from "./components/layout/TopBar";
 import { ConnectView } from "./components/layout/ConnectView";
-import { ConnectedView } from "./components/layout/ConnectedView";
+import { Dashboard } from "./components/layout/Dashboard";
+import { TISettingsDialog } from "./components/settings/TISettingsDialog";
 import { Skeleton } from "./components/ui/Skeleton";
 import { useSession } from "./hooks/useSession";
 import { useTheme } from "./hooks/useTheme";
@@ -15,6 +16,7 @@ function wantsGallery(): boolean {
 export default function App() {
   const session = useSession();
   const { theme, toggle } = useTheme();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   if (wantsGallery()) {
     return (
@@ -25,19 +27,21 @@ export default function App() {
   }
 
   const meta = session.meta;
+  const connected = meta !== null && session.token !== "";
 
   return (
     <>
       <TopBar
         theme={theme}
         onToggleTheme={toggle}
-        connected={meta !== null}
+        connected={connected}
         hostId={meta?.host_id}
+        onOpenSettings={() => setSettingsOpen(true)}
         onDisconnect={session.disconnect}
       />
       <main className="main">
         {meta ? (
-          <ConnectedView hostId={meta.host_id} scenarios={meta.scenarios} />
+          <Dashboard token={session.token} meta={meta} />
         ) : session.restoring ? (
           <section className="connect" aria-busy="true">
             <div className="connect-card">
@@ -57,6 +61,10 @@ export default function App() {
           />
         )}
       </main>
+
+      {settingsOpen && connected ? (
+        <TISettingsDialog token={session.token} onClose={() => setSettingsOpen(false)} />
+      ) : null}
     </>
   );
 }

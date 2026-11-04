@@ -11,6 +11,9 @@ export class ApiError extends Error {
   }
 }
 
+/** Fired on any 401 so the session layer can drop the token. */
+export const UNAUTHORIZED_EVENT = "dfir:unauthorized";
+
 interface RequestOptions {
   token?: string;
   method?: string;
@@ -18,8 +21,12 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
-/** apiFetch is the only place that talks to the server. */
-export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
+function fail(status: number, message: string): never {
+  if (status === 401) window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+  throw new ApiError(message, status);
+}
+
+async function request(path: string, options: RequestOptions): Promise<Response> {
   const headers = new Headers({ Accept: "application/json" });
   if (options.token) headers.set("Authorization", `Bearer ${options.token}`);
   if (options.body !== undefined) headers.set("Content-Type", "application/json");
@@ -40,9 +47,21 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
 
   if (!response.ok) {
     const text = (await response.text()).trim();
-    throw new ApiError(text || `${response.status} ${response.statusText}`.trim(), response.status);
+    fail(response.status, text || `${response.status} ${response.statusText}`.trim());
   }
+  return response;
+}
+
+/** apiFetch is the only JSON path to the server. */
+export async function apiFetch<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const response = await request(path, options);
   return (await response.json()) as T;
+}
+
+/** apiFetchBlob downloads evidence bytes (used for artifact downloads). */
+export async function apiFetchBlob(path: string, options: RequestOptions = {}): Promise<Blob> {
+  const response = await request(path, options);
+  return response.blob();
 }
 
 export function fetchMeta(token: string, signal?: AbortSignal): Promise<Meta> {

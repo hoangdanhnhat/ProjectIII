@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, fetchMeta } from "../api/client";
+import { ApiError, UNAUTHORIZED_EVENT, fetchMeta } from "../api/client";
 import type { Meta } from "../api/types";
 
 const TOKEN_KEY = "dfir.operator.token";
@@ -76,6 +76,18 @@ export function useSession() {
     setToken("");
     setMeta(null);
     setError("");
+  }, []);
+
+  // Any API call that comes back 401 drops the session immediately.
+  useEffect(() => {
+    const onUnauthorized = () => {
+      storeToken("");
+      setToken("");
+      setMeta(null);
+      setError("Your session expired. Connect again with the operator token.");
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
 
   const clearError = useCallback(() => setError(""), []);

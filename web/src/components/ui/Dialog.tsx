@@ -5,6 +5,7 @@ interface DialogProps {
   open: boolean;
   onClose: () => void;
   labelledBy: string;
+  className?: string;
   children: ReactNode;
 }
 
@@ -12,7 +13,7 @@ interface DialogProps {
  * Dialog wraps the native modal <dialog>: ESC, focus containment and the
  * backdrop come from the platform, with controlled open/close semantics.
  */
-export function Dialog({ open, onClose, labelledBy, children }: DialogProps) {
+export function Dialog({ open, onClose, labelledBy, className, children }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -25,7 +26,7 @@ export function Dialog({ open, onClose, labelledBy, children }: DialogProps) {
   return (
     <dialog
       ref={ref}
-      className="dialog"
+      className={className ? `dialog ${className}` : "dialog"}
       aria-labelledby={labelledBy}
       onCancel={(event) => {
         event.preventDefault();

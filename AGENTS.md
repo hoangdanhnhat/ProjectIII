@@ -45,14 +45,17 @@ agent/collector changes `GOOS=windows go vet ./...`.
 
 ```text
 src/
-  api/        client.ts (only fetch wrapper), types.ts (all API payloads)
-  hooks/      useSession, useTheme, useHashJob (no hidden state libraries)
+  api/        client.ts (only fetch wrapper), types.ts (all API payloads),
+              queries.ts (query keys + hooks + mutations)
+  hooks/      useSession, useTheme
+  lib/        format (time/bytes), download, jobFilters
   components/
     ui/       primitives: Button, Chip, Tag, Field, Dialog, Toasts, ...
-    layout/   TopBar, ConnectView, shell
-    jobs/     dashboard  (phase 3)
-    detail/   job sheet  (phase 4)
-    ti/       triage + settings (phase 4)
+    layout/   TopBar, ConnectView, Dashboard
+    jobs/     stats, filters, list, new-collection dialog
+    detail/   collection sheet, facts, artifacts, downloads
+    ti/       triage section, findings/connections/DNS tables, verdict chips
+    settings/ Threat Intel dialog: VirusTotal card + white/blacklist manager
   styles/     tokens.css (the only literal colors), base.css, components.css
   dev/        Gallery.tsx — dev-only primitive gallery (?gallery)
   test/       setup, fixtures, MSW handlers, token/contrast tests
@@ -112,7 +115,9 @@ user-visible) a sentence in `README.md`.
 ## Migration status (front-end rewrite)
 
 - Legacy vanilla console is served at `/` from `internal/webui/static/`.
-- The React console is served at `/next/` from `internal/webui/dist/`.
+- The React console is served at `/next/` from `internal/webui/dist/` and
+  is feature-complete (dashboard, triage, settings); only the cutover
+  remains.
 - `web/vite.config.ts` sets `base: "/next/"`; at cutover flip it to `/`,
   point `Handler()` at the dist bundle, delete `static/`, and update
   `internal/webui/webui_test.go`.
