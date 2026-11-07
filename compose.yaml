@@ -36,8 +36,8 @@ services:
       - 0.0.0.0:8080
       - -data
       - /data
-      - -host-id
-      - lab-ubuntu
+      - -hosts
+      - "${DFIR_HOSTS:-*}"
     ports:
       - "${DFIR_CONSOLE_PORT:-8080}:8080"
     volumes:
@@ -52,6 +52,7 @@ services:
       - web
     environment:
       DFIR_AGENT_TOKEN: ${DFIR_AGENT_TOKEN}
+      DFIR_WEB_HOST_ID: ${DFIR_WEB_HOST_ID:-lab-ubuntu}
     depends_on:
       - dfir-server
     ports:

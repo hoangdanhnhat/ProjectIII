@@ -13,6 +13,7 @@ SHELL := /bin/sh
 ENV_FILE := .env
 BASE := http://localhost:8080
 SCENARIO ?= webshell.v1
+HOST ?=
 NODE_IMAGE ?= node:22-alpine
 
 # npm runs inside Node 22 so no host toolchain is needed; the repository
@@ -51,12 +52,15 @@ lab-traffic: ## 5 requests to the uploads fixture (requires 'make lab-up-web')
 	done; \
 	echo "5 requests served by Apache - see the access.log snapshot in the next job"
 
-lab-job: ## create a $(SCENARIO) job and wait for it (e.g. SCENARIO=netstat.v1; optional SINCE=RFC3339)
+lab-job: ## create a $(SCENARIO) job for HOST (default: first DFIR_HOSTS ID); optional SINCE=RFC3339
 	@test -f $(ENV_FILE) || { echo "run 'make lab-init' first"; exit 1; }; \
 	set -a; . ./$(ENV_FILE); set +a; \
+	host='$(HOST)'; \
+	if [ -z "$$host" ]; then host="$${DFIR_HOSTS%%,*}"; fi; \
+	if [ -z "$$host" ] || [ "$$host" = "*" ]; then echo "set HOST=<host-id> (see the Machines page)"; exit 1; fi; \
 	since='$(SINCE)'; \
 	scenario='$(SCENARIO)'; \
-	body=$$(printf '{"host_id":"lab-ubuntu","scenario":"%s"' "$$scenario"; \
+	body=$$(printf '{"host_id":"%s","scenario":"%s"' "$$host" "$$scenario"; \
 	  [ -n "$$since" ] && printf ',"since":"%s"' "$$since"; \
 	  printf '}'); \
 	resp=$$(curl -sS -X POST $(BASE)/v1/jobs \
@@ -64,7 +68,7 @@ lab-job: ## create a $(SCENARIO) job and wait for it (e.g. SCENARIO=netstat.v1; 
 	  -H 'Content-Type: application/json' -d "$$body"); \
 	jobid=$$(printf '%s' "$$resp" | sed -n 's/^{"id":"\([0-9a-f]\{32\}\)".*/\1/p'); \
 	if [ -z "$$jobid" ]; then echo "could not create job:"; printf '%s\n' "$$resp"; exit 1; fi; \
-	echo "job $$jobid created ($$scenario), waiting for the agent..."; \
+	echo "job $$jobid created for $$host ($$scenario), waiting for the agent..."; \
 	out=''; status=''; \
 	for i in $$(seq 1 30); do \
 	  out=$$(curl -sS -H "Authorization: Bearer $${DFIR_OPERATOR_TOKEN}" $(BASE)/v1/jobs/$$jobid); \

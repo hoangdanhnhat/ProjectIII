@@ -22,13 +22,8 @@ func factsWith(roles ...string) *Facts {
 		case "web":
 			f.IIS = &IISFacts{Registry: true, MajorVersion: 10, ConfigPresent: true}
 			f.Services["W3SVC"] = service(serviceStartAuto)
-		case "file":
-			f.Shares = append(f.Shares,
-				Share{Name: "IPC$"},
-				Share{Name: "C$", Path: `C:\`},
-				Share{Name: "Data", Path: `D:\Shares\Data`},
-			)
-			f.Services["LanmanServer"] = service(serviceStartAuto)
+		case "workstation":
+			f.ProductType = "WinNT"
 		case "sql":
 			f.SQLInstances = []string{"MSSQLSERVER"}
 			f.Services["MSSQLSERVER"] = service(serviceStartAuto)
@@ -63,8 +58,8 @@ func TestClassifyDomainController(t *testing.T) {
 	if !ok || dc.Tier != TierConfirmed || dc.Confidence != 1 {
 		t.Fatalf("dc = %+v (present=%v), results=%+v", dc, ok, results)
 	}
-	if _, ok := roleByName(results, RoleFileServer); ok {
-		t.Fatalf("SYSVOL/NETLOGON must not make a DC a file server: %+v", results)
+	if _, ok := roleByName(results, RoleWorkstation); ok {
+		t.Fatalf("a domain controller must not be classified as a workstation: %+v", results)
 	}
 }
 
@@ -80,16 +75,15 @@ func TestClassifyWebServer(t *testing.T) {
 	}
 }
 
-func TestClassifyFileServerUsesCustomSharesOnly(t *testing.T) {
-	f := factsWith("file")
+func TestClassifyWorkstation(t *testing.T) {
+	f := factsWith("workstation")
 	results := Classify(f)
-	file, ok := roleByName(results, RoleFileServer)
-	if !ok || file.Tier != TierConfirmed {
-		t.Fatalf("file = %+v (present=%v), results=%+v", file, ok, results)
+	workstation, ok := roleByName(results, RoleWorkstation)
+	if !ok || workstation.Tier != TierConfirmed || workstation.Confidence != 1 {
+		t.Fatalf("workstation = %+v (present=%v), results=%+v", workstation, ok, results)
 	}
-	detail := file.Evidence[0].Detail
-	if detail != "non-default SMB share(s): Data" {
-		t.Fatalf("share detail = %q, want only the custom share", detail)
+	if len(results) != 1 {
+		t.Fatalf("workstation-only host got extra roles: %+v", results)
 	}
 }
 
@@ -130,11 +124,14 @@ func TestClassifyWorkstationWithIISKeepsBothFacts(t *testing.T) {
 	if profile.PrimaryRole != RoleWebServer {
 		t.Fatalf("primary role = %q, want web_server", profile.PrimaryRole)
 	}
+	if _, ok := roleByName(profile.Roles, RoleWorkstation); !ok {
+		t.Fatalf("workstation signal missing from a WinNT host: %+v", profile.Roles)
+	}
 }
 
-func TestClassifyNoServerRole(t *testing.T) {
+func TestClassifyServerWithoutRole(t *testing.T) {
 	f := &Facts{
-		ProductType: "WinNT",
+		ProductType: "ServerNT",
 		Services:    map[string]Service{"LanmanServer": service(serviceStartAuto)},
 		Shares: []Share{
 			{Name: "IPC$"},

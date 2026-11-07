@@ -28,7 +28,7 @@ import (
 
 func main() {
 	base := flag.String("server", "http://127.0.0.1:8080", "server URL (HTTP, or HTTPS with -tls-ca)")
-	host := flag.String("host-id", "lab-ubuntu", "host ID registered on server")
+	host := flag.String("host-id", "", "host ID (default: the machine hostname)")
 	uploads := flag.String("uploads", webshell.DefaultUploadsDir(), "lab upload directory; never guessed automatically")
 	webConfig := flag.String("web-config", webshell.DefaultWebConfig(), "web server configuration file used for role detection")
 	webLogs := flag.String("web-logs", webshell.DefaultWebLogs(), "comma-separated web server log paths or glob patterns")
@@ -37,6 +37,9 @@ func main() {
 	apacheLogs := flag.String("apache-logs", "", "deprecated alias for -web-logs")
 	ca := flag.String("tls-ca", "", "optional PEM CA for HTTPS servers")
 	interval := flag.Duration("interval", 5*time.Second, "polling interval")
+	state := flag.String("state", agent.DefaultStatePath(), "local host-role state file")
+	heartbeat := flag.Duration("heartbeat-interval", time.Minute, "inventory heartbeat interval")
+	roleInterval := flag.Duration("role-interval", time.Hour, "automatic role detection interval")
 	flag.Parse()
 	// Visit lets "-apache-logs ''" keep its meaning (an explicitly empty list).
 	set := make(map[string]bool)
@@ -50,6 +53,10 @@ func main() {
 	token := os.Getenv("DFIR_AGENT_TOKEN")
 	if token == "" {
 		log.Fatal("DFIR_AGENT_TOKEN is required")
+	}
+	hostID, err := agent.ResolveHostID(*host)
+	if err != nil {
+		log.Fatal(err)
 	}
 	u, err := url.Parse(*base)
 	if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") {
@@ -78,13 +85,18 @@ func main() {
 		eventlog.New(eventlog.Options{Channels: eventlog.SplitChannels(*eventlogChannels)}),
 		hostrolecollector.New(hostrolecollector.Options{}),
 	)
+	log.Printf("agent host ID: %s", hostID)
 	a := agent.New(agent.Options{
-		ServerURL: *base,
-		HostID:    *host,
-		Token:     token,
-		Client:    &http.Client{Timeout: 60 * time.Second, Transport: transport},
-		Registry:  registry,
-		Interval:  *interval,
+		ServerURL:         *base,
+		HostID:            hostID,
+		Token:             token,
+		Client:            &http.Client{Timeout: 60 * time.Second, Transport: transport},
+		Registry:          registry,
+		Interval:          *interval,
+		StatePath:         *state,
+		HeartbeatInterval: *heartbeat,
+		RoleInterval:      *roleInterval,
+		Version:           agent.Version(),
 	})
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

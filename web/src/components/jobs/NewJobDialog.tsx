@@ -10,6 +10,7 @@ interface NewJobDialogProps {
   onClose: () => void;
   token: string;
   defaultHost: string;
+  hosts?: string[];
   scenarios: string[];
   onCreated: (job: Job) => void;
 }
@@ -19,8 +20,10 @@ export function NewJobDialog(props: NewJobDialogProps) {
   return <NewJobForm {...props} />;
 }
 
-function NewJobForm({ onClose, token, defaultHost, scenarios, onCreated }: NewJobDialogProps) {
-  const [host, setHost] = useState(defaultHost);
+function NewJobForm({ onClose, token, defaultHost, hosts = [], scenarios, onCreated }: NewJobDialogProps) {
+  const [host, setHost] = useState(
+    hosts.length > 0 ? (hosts.includes(defaultHost) ? defaultHost : hosts[0]) : defaultHost,
+  );
   const [scenario, setScenario] = useState(scenarios[0] ?? "netstat.v1");
   const [since, setSince] = useState("");
   const [error, setError] = useState("");
@@ -61,15 +64,31 @@ function NewJobForm({ onClose, token, defaultHost, scenarios, onCreated }: NewJo
         <DialogHead id="new-job-title" eyebrow="New job" title="Request a collection" onClose={onClose} />
         <div className="dialog-body">
           <Field label="Host ID" htmlFor="host-input">
-            <TextInput
-              id="host-input"
-              value={host}
-              onChange={(event) => setHost(event.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="lab-ubuntu"
-              autoFocus
-            />
+            {hosts.length > 0 ? (
+              <select
+                id="host-input"
+                className="field-input"
+                value={host}
+                onChange={(event) => setHost(event.target.value)}
+                autoFocus
+              >
+                {hosts.map((id) => (
+                  <option key={id} value={id}>
+                    {id}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <TextInput
+                id="host-input"
+                value={host}
+                onChange={(event) => setHost(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="lab-ubuntu"
+                autoFocus
+              />
+            )}
           </Field>
           <Field label="Scenario" htmlFor="scenario-input">
             <select

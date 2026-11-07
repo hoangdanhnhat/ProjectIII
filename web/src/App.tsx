@@ -1,7 +1,8 @@
-import { lazy, Suspense, useState } from "react";
-import { TopBar } from "./components/layout/TopBar";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { TopBar, type AppView } from "./components/layout/TopBar";
 import { ConnectView } from "./components/layout/ConnectView";
 import { Dashboard } from "./components/layout/Dashboard";
+import { InventoryPage } from "./components/inventory/InventoryPage";
 import { TISettingsDialog } from "./components/settings/TISettingsDialog";
 import { Skeleton } from "./components/ui/Skeleton";
 import { useSession } from "./hooks/useSession";
@@ -13,10 +14,21 @@ function wantsGallery(): boolean {
   return import.meta.env.DEV && new URLSearchParams(window.location.search).has("gallery");
 }
 
+function currentView(): AppView {
+  return window.location.hash.startsWith("#/machines") ? "machines" : "collections";
+}
+
 export default function App() {
   const session = useSession();
   const { theme, toggle } = useTheme();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [view, setView] = useState<AppView>(currentView);
+
+  useEffect(() => {
+    const sync = () => setView(currentView());
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
 
   if (wantsGallery()) {
     return (
@@ -36,12 +48,18 @@ export default function App() {
         onToggleTheme={toggle}
         connected={connected}
         hostId={meta?.host_id}
+        hosts={meta?.hosts}
+        view={view}
         onOpenSettings={() => setSettingsOpen(true)}
         onDisconnect={session.disconnect}
       />
       <main className="main">
         {meta ? (
-          <Dashboard token={session.token} meta={meta} />
+          view === "machines" ? (
+            <InventoryPage token={session.token} meta={meta} />
+          ) : (
+            <Dashboard token={session.token} meta={meta} />
+          )
         ) : session.restoring ? (
           <section className="connect" aria-busy="true">
             <div className="connect-card">

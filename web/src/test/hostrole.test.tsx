@@ -23,7 +23,7 @@ describe("host role card", () => {
     expect(screen.getAllByText("Web server (IIS)").length).toBeGreaterThan(0);
     expect(screen.getByText("Confirmed")).toBeInTheDocument();
     expect(screen.getByText("100%")).toBeInTheDocument();
-    expect(screen.getByText("File server (SMB)")).toBeInTheDocument();
+    expect(screen.getByText("Database server (MSSQL)")).toBeInTheDocument();
     expect(screen.getByText("65%")).toBeInTheDocument();
   });
 

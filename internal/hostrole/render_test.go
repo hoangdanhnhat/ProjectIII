@@ -33,7 +33,7 @@ func TestBuildProfile(t *testing.T) {
 }
 
 func TestRenderIsDeterministicAndParsable(t *testing.T) {
-	f := factsWith("dc", "file", "dns")
+	f := factsWith("dc", "dns")
 	f.ProbeErrors = []ProbeError{
 		{Source: "z", Detail: "last"},
 		{Source: "a", Detail: "first"},
@@ -56,7 +56,7 @@ func TestRenderIsDeterministicAndParsable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.PrimaryRole != RoleDomainController || len(parsed.Roles) != 3 {
+	if parsed.PrimaryRole != RoleDomainController || len(parsed.Roles) != 2 {
 		t.Fatalf("parsed = %+v", parsed)
 	}
 }

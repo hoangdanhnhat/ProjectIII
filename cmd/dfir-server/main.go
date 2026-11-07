@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"example.com/dfir-collector/internal/hostrole"
 	"example.com/dfir-collector/internal/protocol"
 	"example.com/dfir-collector/internal/ti"
 	"example.com/dfir-collector/internal/webui"
@@ -27,9 +28,13 @@ import (
 const maxArtifact = 10 << 20
 
 type server struct {
-	mu                                     sync.Mutex
-	dir, hostID, operatorToken, agentToken string
-	jobs                                   map[string]*protocol.Job
+	mu                             sync.Mutex
+	dir, operatorToken, agentToken string
+	primaryHost                    string
+	allowAnyHost                   bool
+	hostIDs                        map[string]bool
+	hosts                          map[string]*protocol.Host
+	jobs                           map[string]*protocol.Job
 	// threat-intel state: operator-managed settings and white/blacklists,
 	// shared VirusTotal client with its persistent verdict cache.
 	settings  *ti.SettingsStore
@@ -41,7 +46,8 @@ type server struct {
 func main() {
 	addr := flag.String("listen", "127.0.0.1:8080", "HTTP listen address")
 	dir := flag.String("data", "./data", "evidence directory")
-	host := flag.String("host-id", "lab-ubuntu", "authorized agent host ID")
+	host := flag.String("host-id", "lab-ubuntu", "single authorized host ID (compatibility alias)")
+	hostsFlag := flag.String("hosts", "", "comma-separated authorized host IDs, or '*' to accept any machine hostname")
 	cert := flag.String("tls-cert", "", "optional TLS certificate (enables HTTPS)")
 	key := flag.String("tls-key", "", "optional TLS private key")
 	flag.Parse()
@@ -53,7 +59,18 @@ func main() {
 	if (*cert == "") != (*key == "") {
 		log.Fatal("set both TLS certificate and key")
 	}
-	s, err := newServer(*dir, *host, op, ag)
+	hosts, allowAny, err := parseHostList(*hostsFlag)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if len(hosts) == 0 && !allowAny {
+		fallback, err := protocol.NormalizeHostID(*host)
+		if err != nil {
+			log.Fatal(err)
+		}
+		hosts = []string{fallback}
+	}
+	s, err := newServerWithPolicy(*dir, hosts, allowAny, op, ag)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -62,7 +79,11 @@ func main() {
 		// so this is acceptable only on a trusted lab network.
 		log.Printf("warning: serving plain HTTP without TLS; use only on a trusted lab network")
 	}
-	log.Printf("DFIR server listening at %s for host %s", *addr, *host)
+	hostLabel := strings.Join(hosts, ",")
+	if allowAny {
+		hostLabel = "* (any valid hostname)"
+	}
+	log.Printf("DFIR server listening at %s for hosts %s", *addr, hostLabel)
 	httpServer := &http.Server{Addr: *addr, Handler: s.routes(), ReadHeaderTimeout: 5 * time.Second}
 	if *cert != "" {
 		err = httpServer.ListenAndServeTLS(*cert, *key)
@@ -73,15 +94,58 @@ func main() {
 }
 
 func newServer(dir, host, op, ag string) (*server, error) {
-	if host == "" || strings.ContainsAny(host, "/\\") {
-		return nil, errors.New("invalid host ID")
+	return newServerWithHosts(dir, []string{host}, op, ag)
+}
+
+// newServerWithHosts keeps the single-host/allowlist test and compatibility
+// path. Use newServerWithPolicy for wildcard mode.
+func newServerWithHosts(dir string, hosts []string, op, ag string) (*server, error) {
+	return newServerWithPolicy(dir, hosts, false, op, ag)
+}
+
+func newServerWithPolicy(dir string, hosts []string, allowAny bool, op, ag string) (*server, error) {
+	if allowAny && len(hosts) > 0 {
+		return nil, errors.New("wildcard mode cannot be combined with explicit host IDs")
 	}
-	for _, d := range []string{dir, filepath.Join(dir, "jobs"), filepath.Join(dir, "artifacts")} {
+	if !allowAny && len(hosts) == 0 {
+		return nil, errors.New("at least one host ID is required")
+	}
+	hostIDs := make(map[string]bool, len(hosts))
+	normalizedHosts := make([]string, 0, len(hosts))
+	for _, host := range hosts {
+		id, err := protocol.NormalizeHostID(host)
+		if err != nil {
+			return nil, err
+		}
+		if hostIDs[id] {
+			continue
+		}
+		hostIDs[id] = true
+		normalizedHosts = append(normalizedHosts, id)
+	}
+	primaryHost := ""
+	if len(normalizedHosts) > 0 {
+		primaryHost = normalizedHosts[0]
+	}
+	for _, d := range []string{dir, filepath.Join(dir, "jobs"), filepath.Join(dir, "artifacts"), filepath.Join(dir, "hosts")} {
 		if err := os.MkdirAll(d, 0700); err != nil {
 			return nil, err
 		}
 	}
-	s := &server{dir: dir, hostID: host, operatorToken: op, agentToken: ag, jobs: make(map[string]*protocol.Job)}
+	hostRecords, err := loadHosts(dir, normalizedHosts)
+	if err != nil {
+		return nil, err
+	}
+	s := &server{
+		dir:           dir,
+		primaryHost:   primaryHost,
+		allowAnyHost:  allowAny,
+		hostIDs:       hostIDs,
+		hosts:         hostRecords,
+		operatorToken: op,
+		agentToken:    ag,
+		jobs:          make(map[string]*protocol.Job),
+	}
 	settings, err := ti.LoadSettings(dir)
 	if err != nil {
 		return nil, err
@@ -135,6 +199,10 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("GET /v1/jobs", s.auth(false, s.list))
 	m.HandleFunc("GET /v1/jobs/{id}", s.auth(false, s.get))
 	m.HandleFunc("GET /v1/jobs/{id}/artifacts/{artifact}", s.auth(false, s.download))
+	m.HandleFunc("GET /v1/hosts", s.auth(false, s.hostsList))
+	m.HandleFunc("GET /v1/hosts/{id}", s.auth(false, s.hostGet))
+	m.HandleFunc("PUT /v1/hosts/{id}/roles", s.auth(false, s.hostRolesPUT))
+	m.HandleFunc("DELETE /v1/hosts/{id}/roles", s.auth(false, s.hostRolesDELETE))
 	m.HandleFunc("GET /v1/meta", s.auth(false, s.meta))
 	m.HandleFunc("GET /v1/settings/ti", s.auth(false, s.tiSettingsGET))
 	m.HandleFunc("PUT /v1/settings/ti", s.auth(false, s.tiSettingsPUT))
@@ -143,6 +211,7 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("POST /v1/blacklist", s.auth(false, s.listPOST(s.blacklist, "blacklist")))
 	m.HandleFunc("DELETE /v1/blacklist/{id}", s.auth(false, s.listDELETE(s.blacklist, "blacklist")))
 	m.HandleFunc("POST /v1/jobs/{id}/ti", s.auth(false, s.tiTriggerPOST))
+	m.HandleFunc("POST /v1/agent/host", s.auth(true, s.agentHost))
 	m.HandleFunc("GET /v1/agent/jobs/next", s.auth(true, s.next))
 	m.HandleFunc("POST /v1/agent/jobs/{id}/artifacts/{artifact}", s.auth(true, s.upload))
 	m.HandleFunc("POST /v1/agent/jobs/{id}/result", s.auth(true, s.result))
@@ -167,7 +236,8 @@ func (s *server) auth(agent bool, fn http.HandlerFunc) http.HandlerFunc {
 		want := s.operatorToken
 		if agent {
 			want = s.agentToken
-			if r.Header.Get("X-Host-ID") != s.hostID {
+			hostID, err := protocol.NormalizeHostID(r.Header.Get("X-Host-ID"))
+			if err != nil || (!s.allowAnyHost && !s.hostIDs[hostID]) {
 				http.Error(w, "unauthorized host", 403)
 				return
 			}
@@ -243,7 +313,8 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON", 400)
 		return
 	}
-	if req.HostID != s.hostID {
+	hostID, err := protocol.NormalizeHostID(req.HostID)
+	if err != nil {
 		http.Error(w, "unsupported host", 400)
 		return
 	}
@@ -257,7 +328,16 @@ func (s *server) create(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	job := &protocol.Job{ID: newID(), HostID: req.HostID, Scenario: req.Scenario, Since: req.Since, Status: "queued", CreatedAt: time.Now().UTC(), Artifacts: []protocol.Artifact{}}
+	if s.allowAnyHost {
+		if s.hosts[hostID] == nil {
+			http.Error(w, "unknown host: wait for its first heartbeat or check the Machines page", 400)
+			return
+		}
+	} else if !s.hostIDs[hostID] {
+		http.Error(w, "unsupported host", 400)
+		return
+	}
+	job := &protocol.Job{ID: newID(), HostID: hostID, Scenario: req.Scenario, Since: req.Since, Status: "queued", CreatedAt: time.Now().UTC(), Artifacts: []protocol.Artifact{}}
 	if err := s.save(job); err != nil {
 		http.Error(w, "storage failure", 500)
 		return
@@ -293,18 +373,41 @@ func (s *server) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) meta(w http.ResponseWriter, r *http.Request) {
+	roles := make([]string, 0, len(hostrole.AllRoles()))
+	for _, role := range hostrole.AllRoles() {
+		roles = append(roles, string(role))
+	}
+	s.mu.Lock()
+	hosts := s.inventoryHostIDs()
+	if !s.allowAnyHost {
+		configured := hosts[:0]
+		for _, id := range hosts {
+			if s.hostIDs[id] {
+				configured = append(configured, id)
+			}
+		}
+		hosts = configured
+	}
+	primary := s.primaryHost
+	if primary == "" && len(hosts) > 0 {
+		primary = hosts[0]
+	}
+	s.mu.Unlock()
 	writeJSON(w, 200, map[string]any{
-		"host_id":   s.hostID,
+		"host_id":   primary,
+		"hosts":     hosts,
+		"roles":     roles,
 		"scenarios": protocol.ScenarioIDs(),
 	})
 }
 
 func (s *server) next(w http.ResponseWriter, r *http.Request) {
+	hostID := requestHostID(r)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var selected *protocol.Job
 	for _, j := range s.jobs {
-		if j.HostID != s.hostID || (j.Status != "queued" && j.Status != "running") {
+		if j.HostID != hostID || (j.Status != "queued" && j.Status != "running") {
 			continue
 		}
 		if selected == nil || j.CreatedAt.Before(selected.CreatedAt) {

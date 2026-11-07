@@ -1,6 +1,28 @@
-import type { HostRoleProfile, Job, Snapshot, TISettings, TIReport } from "../api/types";
+import type { HostRole, HostRoleProfile, Job, Snapshot, TISettings, TIReport } from "../api/types";
 
-export const META = { host_id: "lab-ubuntu", scenarios: ["webshell.v1", "netstat.v1", "eventlog.v1"] };
+const ROLES: HostRole[] = [
+  "domain_controller",
+  "web_server",
+  "workstation",
+  "database_server",
+  "mail_server",
+  "dns_server",
+  "dhcp_server",
+];
+
+export const META = {
+  host_id: "lab-ubuntu",
+  hosts: ["lab-ubuntu", "win-web01", "win-dc01"],
+  roles: ROLES,
+  scenarios: ["webshell.v1", "netstat.v1", "eventlog.v1", "hostrole.v1"],
+};
+
+export const EMPTY_META = {
+  host_id: "",
+  hosts: [],
+  roles: ROLES,
+  scenarios: META.scenarios,
+};
 
 export const JOB: Job = {
   id: "98a997a4fdfe6edcdee98d71ef8298c8",
@@ -70,14 +92,14 @@ export const HOST_ROLE: HostRoleProfile = {
       ],
     },
     {
-      role: "file_server",
+      role: "database_server",
       confidence: 0.65,
       tier: "probable",
       evidence: [
         {
           strength: "definitive",
-          source: "registry:HKLM\\SYSTEM\\CurrentControlSet\\Services\\LanmanServer\\Shares",
-          detail: "non-default SMB share(s): Deploy",
+          source: "registry:HKLM\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\Instance Names\\SQL",
+          detail: "SQL Server instance(s): MSSQLSERVER",
         },
       ],
     },

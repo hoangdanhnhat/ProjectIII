@@ -1,6 +1,7 @@
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { HOST_ROLE, JOB, REPORT, SNAPSHOT, TI_SETTINGS } from "./fixtures";
+import { HOSTS } from "./hostFixtures";
 
 export const calls: Array<{ method: string; path: string; body: unknown }> = [];
 
@@ -26,6 +27,37 @@ export const handlers = [
     if (params.artifact === "snap1") return HttpResponse.json(SNAPSHOT);
     if (params.artifact === "role1") return HttpResponse.json(HOST_ROLE);
     return new HttpResponse(null, { status: 404 });
+  }),
+
+  http.get("*/v1/hosts", () => HttpResponse.json({ hosts: HOSTS })),
+
+  http.put("*/v1/hosts/:id/roles", async ({ params, request }) => {
+    const body = (await request.json()) as { roles: string[]; note?: string };
+    record("PUT", `/v1/hosts/${params.id}/roles`, body);
+    const base = HOSTS.find((host) => host.host_id === params.id) ?? HOSTS[0];
+    return HttpResponse.json({
+      ...base,
+      manual_roles: body.roles,
+      effective_roles: body.roles,
+      role_source: "manual",
+      role_revision: base.role_revision + 1,
+      applied_role_revision: base.role_revision,
+      manual_note: body.note ?? "",
+      manual_updated_at: new Date().toISOString(),
+    });
+  }),
+
+  http.delete("*/v1/hosts/:id/roles", ({ params }) => {
+    record("DELETE", `/v1/hosts/${params.id}/roles`);
+    const base = HOSTS.find((host) => host.host_id === params.id) ?? HOSTS[0];
+    return HttpResponse.json({
+      ...base,
+      manual_roles: undefined,
+      effective_roles: base.auto_roles.map((role) => role.role),
+      role_source: "auto",
+      role_revision: base.role_revision + 1,
+      applied_role_revision: base.role_revision,
+    });
   }),
 
   http.get("*/v1/settings/ti", () => HttpResponse.json(TI_SETTINGS)),

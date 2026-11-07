@@ -2,11 +2,15 @@ import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
 import type { Theme } from "../../hooks/useTheme";
 
+export type AppView = "collections" | "machines";
+
 interface TopBarProps {
   theme: Theme;
   onToggleTheme: () => void;
   connected: boolean;
   hostId?: string;
+  hosts?: string[];
+  view: AppView;
   onOpenSettings: () => void;
   onDisconnect: () => void;
 }
@@ -16,6 +20,8 @@ export function TopBar({
   onToggleTheme,
   connected,
   hostId,
+  hosts = [],
+  view,
   onOpenSettings,
   onDisconnect,
 }: TopBarProps) {
@@ -28,11 +34,28 @@ export function TopBar({
           <span className="brand-name">Evidence Console</span>
           <span className="brand-sub">DFIR</span>
         </a>
+        {connected ? (
+          <nav className="topbar-nav" aria-label="Primary">
+            <a
+              className={view === "collections" ? "nav-link is-active" : "nav-link"}
+              href="#/"
+            >
+              Collections
+            </a>
+            <a
+              className={view === "machines" ? "nav-link is-active" : "nav-link"}
+              href="#/machines"
+            >
+              Machines
+            </a>
+          </nav>
+        ) : null}
         <div className="topbar-actions">
           {connected ? (
-            <span className="statusline">
-              <span className="status-dot" data-state="ok" />
-              {hostId}
+            <span className="statusline" title={hosts.join(", ")}>
+              <span className="status-dot" data-state={hostId ? "ok" : undefined} />
+              {hostId || "No hosts"}
+              {hosts.length > 1 ? ` +${hosts.length - 1}` : ""}
             </span>
           ) : null}
           {connected ? (

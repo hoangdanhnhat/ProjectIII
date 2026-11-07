@@ -1,35 +1,36 @@
-// Package hostrole classifies a Windows host's server role from passive,
+// Package hostrole classifies a Windows host's role from passive,
 // read-only facts: registry keys, service installation keys and a handful of
 // fixed filesystem paths. It never runs commands, queries the network, or
 // reads file contents.
 //
 // The output is an evidence-backed profile, not a proof of what the host is
 // currently serving. A host can legitimately hold several roles (a domain
-// controller usually is also a DNS and file server), so Classify returns a
-// sorted list rather than a single label.
+// controller usually is also a DNS server), so Classify returns a sorted list
+// rather than a single label.
 package hostrole
 
 import "time"
 
-// Role is one server role this package can recognise. Third-party web and
+// Role is one host role this package can recognise. Third-party web and
 // database servers are intentionally out of scope for schema version 1.
 type Role string
 
 const (
 	RoleDomainController Role = "domain_controller"
 	RoleWebServer        Role = "web_server"
-	RoleFileServer       Role = "file_server"
+	RoleWorkstation      Role = "workstation"
 	RoleDatabaseServer   Role = "database_server"
 	RoleMailServer       Role = "mail_server"
 	RoleDNSServer        Role = "dns_server"
 	RoleDHCPServer       Role = "dhcp_server"
 )
 
-// roleOrder is the documented tie-break order: infrastructure roles first.
+// roleOrder is the documented tie-break order: infrastructure roles first,
+// then a client workstation, then the remaining server roles.
 var roleOrder = []Role{
 	RoleDomainController,
 	RoleWebServer,
-	RoleFileServer,
+	RoleWorkstation,
 	RoleDatabaseServer,
 	RoleMailServer,
 	RoleDNSServer,
@@ -43,6 +44,19 @@ func roleRank(r Role) int {
 		}
 	}
 	return len(roleOrder)
+}
+
+// AllRoles returns the recognised role vocabulary in display order.
+func AllRoles() []Role {
+	out := make([]Role, len(roleOrder))
+	copy(out, roleOrder)
+	return out
+}
+
+// ValidRole reports whether r is a role this package can detect or accept as
+// a manual assignment.
+func ValidRole(r Role) bool {
+	return roleRank(r) < len(roleOrder)
 }
 
 // Strength describes how much one piece of evidence supports a role.

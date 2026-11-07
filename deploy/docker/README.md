@@ -15,7 +15,7 @@ thập trên Linux sẽ được bổ sung ở giai đoạn sau.
 ```text
 máy Linux (bạn)                                mạng Docker
 ---------------------------------------         ------------------------------------------
-browser/curl ── http://localhost:8080 ────────▶ dfir-server    HTTP 0.0.0.0:8080, -host-id lab-ubuntu
+browser/curl ── http://localhost:8080 ────────▶ dfir-server    HTTP 0.0.0.0:8080, -hosts theo DFIR_HOSTS
                                                     ▲
                                                     │ http://dfir-server:8080 (tùy chọn, profile "web")
                                                     │ polling đi ra mỗi 5 giây
@@ -146,9 +146,11 @@ $env:DFIR_AGENT_TOKEN = '<DFIR_AGENT_TOKEN trong .env>'
 
 C:\dfir\dfir-agent.exe `
   -server http://<ip-linux>:8080 `
-  -host-id lab-ubuntu `
   -interval 5s
 ```
+
+Agent tự dùng hostname của máy (viết thường) làm host ID. Chỉ thêm
+`-host-id <id>` khi cần ghi đè.
 
 Các cờ tùy chọn:
 
@@ -175,7 +177,7 @@ Windows như `System`, `svchost.exe`). Sau đó thử `make lab-job SCENARIO=eve
 
 ```powershell
 nssm install dfir-agent "C:\dfir\dfir-agent.exe"
-nssm set dfir-agent AppParameters "-server http://<ip-linux>:8080 -host-id lab-ubuntu -eventlog-channels System,Application,Security"
+nssm set dfir-agent AppParameters "-server http://<ip-linux>:8080 -eventlog-channels System,Application,Security"
 nssm set dfir-agent AppEnvironmentExtra "DFIR_AGENT_TOKEN=<agent-token>"
 nssm set dfir-agent AppStdout "C:\dfir\agent.log"
 nssm set dfir-agent AppStderr "C:\dfir\agent.err.log"
@@ -186,37 +188,30 @@ nssm start dfir-agent
 Token phải nằm trong môi trường của service, tuyệt đối không đưa vào dòng lệnh
 (đối số lệnh hiện rõ trong danh sách tiến trình).
 
-## 5. Quan trọng: một host ID, hai agent
+## 5. Nhiều host ID, nhiều agent
 
-Server chỉ cấp quyền đúng **một** `-host-id` (`lab-ubuntu`) với một agent token.
-Vì vậy mặc định chỉ **một** agent nên polling — agent Windows. Nếu bật thêm
-container `web` (`make lab-up-web`), **bất kỳ agent nào cũng có thể nhận bất kỳ
-job nào**: job `netstat.v1` rơi vào agent Linux sẽ trả `skipped` với lý do
-`scenario netstat.v1 is not implemented on linux`, và ngược versa.
+Server nhận `-hosts '*'` (mặc định trong lab, lấy từ `DFIR_HOSTS`) để chấp nhận
+mọi hostname hợp lệ với **một agent token dùng chung**, hoặc một danh sách ID cụ
+thể. Agent tự lấy hostname của máy (viết thường) làm host ID; chỉ cần `-host-id`
+khi muốn ghi đè (trùng tên hoặc giữ ID cũ sau khi đổi tên máy). Đây là thỏa hiệp
+cho lab: bất kỳ ai có token cũng có thể đăng ký bất kỳ hostname hợp lệ; chưa có
+token/enrollment riêng cho từng máy.
 
-- Dùng agent Windows: **không** bật profile web. Nếu web đang chạy, dừng nó:
+```bash
+# .env - bỏ dòng này để dùng mặc định DFIR_HOSTS=*
+DFIR_HOSTS=lab-ubuntu,win-web01,win-dc01
+```
 
-  ```bash
-  docker compose stop web     # dừng agent Linux, server vẫn chạy
-  docker compose start web    # bật lại khi cần
-  ```
+Sau đó chạy từng agent (không cần `-host-id` nếu dùng hostname). Console có tab **Machines** để
+xem inventory, lọc theo role/OS/trạng thái và đặt role thủ công. Nếu bật
+profile `web`, đặt `DFIR_WEB_HOST_ID=lab-ubuntu` (hoặc ID khác có trong
+`DFIR_HOSTS`) để container Linux không tranh job với agent Windows. Job
+`netstat.v1` rơi vào agent Linux vẫn trả `skipped` vì scenario chưa hỗ trợ
+Linux, nhưng job đã được định tuyến đúng host.
 
-- Cần hai agent cùng lúc: chạy thêm một instance server riêng cho máy Windows
-  (hàng đợi và thư mục bằng chứng tách biệt, không cần sửa code):
-
-  ```bash
-  set -a; . ./.env; set +a
-  ./bin/dfir-server-linux -listen 0.0.0.0:8082 -data ./data-windows -host-id win-lab
-  ```
-
-  Khi đó trỏ agent Windows tới `http://<ip-linux>:8082 -host-id win-lab`, và mở
-  `http://<ip-linux>:8082/` trên trình duyệt cho console của instance này. Build
-  binary server native cũng bằng container Go:
-
-  ```bash
-  docker run --rm -v "$PWD:/src" -w /src golang:1.24 sh -c \
-    "go build -trimpath -o /src/bin/dfir-server-linux ./cmd/dfir-server && chown $(id -u):$(id -g) /src/bin/dfir-server-linux"
-  ```
+Nếu vẫn muốn tách hoàn toàn hàng đợi/bằng chứng, có thể chạy thêm instance
+server riêng với `-data` và `-host-id` khác; cách này không còn bắt buộc để
+quản lý nhiều máy.
 
 ## Tệp
 
@@ -256,7 +251,7 @@ job nào**: job `netstat.v1` rơi vào agent Linux sẽ trả `skipped` với l�
 - **Agent in `HTTP allowed only on loopback`** — binary cũ trước thời kỳ HTTP
   trên máy đó; copy bản build hiện tại và đối chiếu SHA-256 (mục 4a).
 - **Agent ghi `poll: HTTP 401`** — token không khớp `DFIR_AGENT_TOKEN` của server (`.env`).
-- **Agent ghi `poll: HTTP 400 unsupported host`** — `-host-id` khác với của server (`lab-ubuntu`).
+- **Agent ghi `poll: HTTP 400 unsupported host` / `403 unauthorized host`** — server đang ở chế độ allowlist và host ID không nằm trong `DFIR_HOSTS`; đặt `DFIR_HOSTS=*` hoặc thêm ID rồi khởi động lại server.
 - **`webshell.v1` trả `needs_configuration` trên Windows** — thiếu `-uploads`
   hoặc đường dẫn không phải thư mục tồn tại (IIS không có thư mục upload mặc định).
 - **`webshell.v1` trả `skipped` trên Windows** — đúng như thiết kế khi không có
@@ -270,7 +265,8 @@ job nào**: job `netstat.v1` rơi vào agent Linux sẽ trả `skipped` với l�
 ## Giới hạn
 
 Chỉ dành cho lab: HTTP thường, không mã hóa đường truyền (TLS để sau), container
-chạy root, token nằm trong `.env`. Mỗi instance server chỉ cấp quyền đúng một
-host ID (mục 5). Mỗi artifact tối đa 10 MiB, tối đa 260 artifact/job. Trên
+chạy root, token nằm trong `.env`. Server cấp quyền một danh sách host ID với
+token dùng chung, không có danh tính riêng cho từng agent (mục 5). Mỗi artifact
+tối đa 10 MiB, tối đa 260 artifact/job. Trên
 Windows hiện có `netstat.v1` và `eventlog.v1` (và `webshell.v1` với IIS);
 `services.v1`/`autoruns.v1` và hỗ trợ thu thập trên Linux đang được lên kế hoạch.

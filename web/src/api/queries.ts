@@ -3,9 +3,11 @@ import { apiFetch, apiFetchBlob } from "./client";
 import type {
   CreateJobInput,
   DNSRecord,
+  Host,
   Job,
   ListEntry,
   ListName,
+  SetHostRolesInput,
   SnapshotConnection,
   TISettings,
   TIReport,
@@ -16,6 +18,8 @@ import type {
 export const qk = {
   jobs: () => ["jobs"] as const,
   job: (id: string) => ["jobs", id] as const,
+  hosts: () => ["hosts"] as const,
+  host: (id: string) => ["hosts", id] as const,
   tiSettings: () => ["ti-settings"] as const,
   artifact: (jobId: string, artifactId: string) => ["artifact", jobId, artifactId] as const,
 };
@@ -57,6 +61,42 @@ export function useArtifactJSON<T>(token: string, jobId: string, artifactId: str
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
+  });
+}
+
+export function useHosts(token: string) {
+  return useQuery({
+    queryKey: qk.hosts(),
+    queryFn: ({ signal }) => apiFetch<{ hosts: Host[] }>("/v1/hosts", { token, signal }),
+    enabled: token !== "",
+    refetchInterval: 10000,
+    refetchIntervalInBackground: false,
+    staleTime: 3000,
+  });
+}
+
+export function useSetHostRoles(token: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ hostId, input }: { hostId: string; input: SetHostRolesInput }) =>
+      apiFetch<Host>(`/v1/hosts/${encodeURIComponent(hostId)}/roles`, {
+        token,
+        method: "PUT",
+        body: input,
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.hosts() }),
+  });
+}
+
+export function useResetHostRoles(token: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (hostId: string) =>
+      apiFetch<Host>(`/v1/hosts/${encodeURIComponent(hostId)}/roles`, {
+        token,
+        method: "DELETE",
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.hosts() }),
   });
 }
 

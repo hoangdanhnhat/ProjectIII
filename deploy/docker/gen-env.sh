@@ -11,6 +11,10 @@ env_file="$root/../../.env"
 
 umask 077
 if [ -f "$env_file" ]; then
+  if ! grep -q '^DFIR_HOSTS=' "$env_file"; then
+    printf 'DFIR_HOSTS=*\n' >> "$env_file"
+    echo "added DFIR_HOSTS=* to the existing .env"
+  fi
   echo ".env already exists - keeping existing tokens"
   exit 0
 fi
@@ -20,5 +24,5 @@ agent="$(openssl rand -hex 32)"
 while [ "$operator" = "$agent" ]; do
   agent="$(openssl rand -hex 32)"
 done
-printf 'DFIR_OPERATOR_TOKEN=%s\nDFIR_AGENT_TOKEN=%s\n' "$operator" "$agent" > "$env_file"
+printf 'DFIR_OPERATOR_TOKEN=%s\nDFIR_AGENT_TOKEN=%s\nDFIR_HOSTS=*\n' "$operator" "$agent" > "$env_file"
 echo "wrote $env_file with fresh random tokens"

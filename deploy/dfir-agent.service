@@ -8,7 +8,8 @@ Type=simple
 # Lab agent needs access to Apache logs and uploads. Restrict permissions before production use.
 User=root
 EnvironmentFile=/etc/dfir-agent.env
-ExecStart=/usr/local/bin/dfir-agent -server http://127.0.0.1:8080 -host-id lab-ubuntu -uploads /var/www/html/uploads
+# Host ID defaults to the machine hostname; add -host-id only as an override.
+ExecStart=/usr/local/bin/dfir-agent -server http://127.0.0.1:8080 -uploads /var/www/html/uploads
 Restart=on-failure
 NoNewPrivileges=true
 ProtectSystem=strict

@@ -23,7 +23,7 @@ apache2ctl start
 
 exec /usr/local/bin/dfir-agent \
   -server http://dfir-server:8080 \
-  -host-id lab-ubuntu \
+  -host-id "${DFIR_WEB_HOST_ID:-lab-ubuntu}" \
   -uploads "$uploads" \
   -web-config /etc/apache2/apache2.conf \
   -web-logs /var/log/apache2/access.log,/var/log/apache2/error.log

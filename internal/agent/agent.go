@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"example.com/dfir-collector/internal/collector"
+	"example.com/dfir-collector/internal/hostrole"
 	"example.com/dfir-collector/internal/protocol"
 )
 
@@ -29,16 +30,34 @@ type Agent struct {
 	client   *http.Client
 	registry *collector.Registry
 	interval time.Duration
+
+	statePath         string
+	heartbeatInterval time.Duration
+	roleInterval      time.Duration
+	roleSource        hostrole.Source
+	version           string
+	now               func() time.Time
+
+	state         *State
+	stateLoaded   bool
+	contacted     bool
+	nextHeartbeat time.Time
 }
 
 // Options configures an Agent.
 type Options struct {
-	ServerURL string       // e.g. https://dfir-server:8443
-	HostID    string       // must match the server's authorized host ID
-	Token     string       // DFIR_AGENT_TOKEN
-	Client    *http.Client // optional; defaults to a 60s-timeout client
-	Registry  *collector.Registry
-	Interval  time.Duration // polling interval, default 5s
+	ServerURL         string       // e.g. https://dfir-server:8443
+	HostID            string       // must match the server's authorized host ID
+	Token             string       // DFIR_AGENT_TOKEN
+	Client            *http.Client // optional; defaults to a 60s-timeout client
+	Registry          *collector.Registry
+	Interval          time.Duration // polling interval, default 5s
+	StatePath         string        // local role cache; platform default when empty
+	HeartbeatInterval time.Duration // inventory heartbeat, default 1m
+	RoleInterval      time.Duration // automatic role detection, default 1h
+	RoleSource        hostrole.Source
+	Version           string
+	Now               func() time.Time // injectable clock for tests
 }
 
 // New returns an Agent ready to Run.
@@ -51,19 +70,49 @@ func New(o Options) *Agent {
 	if interval <= 0 {
 		interval = 5 * time.Second
 	}
+	heartbeat := o.HeartbeatInterval
+	if heartbeat <= 0 {
+		heartbeat = time.Minute
+	}
+	roleInterval := o.RoleInterval
+	if roleInterval <= 0 {
+		roleInterval = time.Hour
+	}
+	statePath := o.StatePath
+	if statePath == "" {
+		statePath = DefaultStatePath()
+	}
+	roleSource := o.RoleSource
+	if roleSource == nil {
+		roleSource = hostrole.NewSource()
+	}
+	now := o.Now
+	if now == nil {
+		now = time.Now
+	}
 	return &Agent{
-		base:     strings.TrimRight(o.ServerURL, "/"),
-		host:     o.HostID,
-		token:    o.Token,
-		client:   client,
-		registry: o.Registry,
-		interval: interval,
+		base:              strings.TrimRight(o.ServerURL, "/"),
+		host:              o.HostID,
+		token:             o.Token,
+		client:            client,
+		registry:          o.Registry,
+		interval:          interval,
+		statePath:         statePath,
+		heartbeatInterval: heartbeat,
+		roleInterval:      roleInterval,
+		roleSource:        roleSource,
+		version:           o.Version,
+		now:               now,
 	}
 }
 
 // Run polls until ctx is done. Transient errors are logged, not fatal: the
 // agent keeps polling and running jobs are retried after a restart.
 func (a *Agent) Run(ctx context.Context) {
+	// Inventory maintenance is independent of job collection: a long
+	// webshell scan must not delay the heartbeat or hold back a manual role
+	// assignment.
+	go a.inventoryLoop(ctx)
 	for {
 		if err := a.poll(ctx); err != nil {
 			log.Printf("poll/collect: %v", err)
@@ -72,6 +121,24 @@ func (a *Agent) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-time.After(a.interval):
+		}
+	}
+}
+
+func (a *Agent) inventoryLoop(ctx context.Context) {
+	a.loadInventoryState()
+	check := a.heartbeatInterval
+	if a.interval < check {
+		check = a.interval
+	}
+	ticker := time.NewTicker(check)
+	defer ticker.Stop()
+	for {
+		a.maintainHost(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
 		}
 	}
 }

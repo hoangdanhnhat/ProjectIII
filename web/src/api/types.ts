@@ -4,6 +4,8 @@
 
 export interface Meta {
   host_id: string;
+  hosts: string[];
+  roles: HostRole[];
   scenarios: string[];
 }
 
@@ -153,7 +155,7 @@ export interface Snapshot {
 export type HostRole =
   | "domain_controller"
   | "web_server"
-  | "file_server"
+  | "workstation"
   | "database_server"
   | "mail_server"
   | "dns_server"
@@ -190,6 +192,50 @@ export interface HostRoleProfile {
   primary_role?: HostRole;
   roles: HostRoleResult[];
   probe_errors?: Array<{ source: string; detail: string }>;
+}
+
+export type HostStatus = "online" | "stale" | "offline" | "never_seen";
+
+export interface HostOS {
+  name?: string;
+  build?: string;
+  product_type?: string;
+  host_class?: string;
+  platform?: string;
+  arch?: string;
+}
+
+export interface HostRoleSummary {
+  role: HostRole;
+  confidence: number;
+  tier: HostRoleTier;
+}
+
+export interface Host {
+  schema_version: number;
+  host_id: string;
+  hostname?: string;
+  os: HostOS;
+  auto_roles: HostRoleSummary[];
+  manual_roles?: HostRole[];
+  effective_roles: HostRole[];
+  role_source: "auto" | "manual";
+  role_revision: number;
+  applied_role_revision: number;
+  role_checked_at?: string | null;
+  role_error?: string;
+  manual_note?: string;
+  manual_updated_at?: string | null;
+  created_at: string;
+  first_seen_at?: string | null;
+  last_seen_at?: string | null;
+  agent_version?: string;
+  status: HostStatus;
+}
+
+export interface SetHostRolesInput {
+  roles: HostRole[];
+  note?: string;
 }
 
 export type ListName = "whitelist" | "blacklist";

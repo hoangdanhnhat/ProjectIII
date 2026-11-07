@@ -1,5 +1,5 @@
 // Package hostrole implements the hostrole.v1 scenario: a versioned profile
-// of the server roles a Windows host appears to hold, derived from passive
+// of the roles a Windows host appears to hold, derived from passive
 // registry, service and filesystem-metadata probes.
 package hostrole
 

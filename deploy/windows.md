@@ -27,15 +27,20 @@ tokens and evidence are not encrypted on the wire; keep this on a trusted lab
 network. HTTPS still works (`-server https://...` plus `-tls-ca`) when TLS is
 wired back in.
 
-### Current single-host limit
+### Multiple managed hosts
 
-The server is configured with **one** `-host-id` and **one** agent token, and rejects every
-other `X-Host-ID`. To collect from a Windows and a Linux host at the same time you must
-either:
+The server accepts `-hosts '*'` (the lab default) to authorize any valid machine hostname
+presented with the shared agent token, or a comma-separated
+`-hosts lab-ubuntu,win-web01,win-dc01` allowlist. The agent uses the machine hostname,
+lowercased, when `-host-id` is omitted; pass `-host-id` only to override a collision or
+keep a stable ID after a rename. This is a lab compromise: any token holder can register
+any valid hostname in wildcard mode. Per-host tokens, enrollment and revocation are not
+implemented in this prototype.
 
-- run two server instances with different `-listen`, `-data` and `-host-id` values, or
-- extend the server with a per-host registry and per-agent credentials (not implemented in
-  this prototype).
+Each agent also sends an inventory heartbeat (`POST /v1/agent/host`) every minute and
+refreshes its roles hourly. The role cache lives at
+`%ProgramData%\dfir-agent\host_state.json` by default; set `-state` to move it. A manual
+override in the console replaces the automatic role set and stops detection until reset.
 
 ### Running the server on Windows
 
@@ -65,7 +70,7 @@ the wrong IIS configuration and logs.
 $env:DFIR_AGENT_TOKEN = '<agent-token>'
 .\bin\dfir-agent.exe `
   -server http://dfir.example:8080 `
-  -host-id win-lab `
+  -state 'C:\ProgramData\dfir-agent\host_state.json' `
   -uploads 'C:\inetpub\wwwroot\uploads' `
   -web-config 'C:\Windows\System32\inetsrv\config\applicationHost.config' `
   -web-logs 'C:\inetpub\logs\LogFiles\W3SVC*\*.log'
@@ -73,6 +78,8 @@ $env:DFIR_AGENT_TOKEN = '<agent-token>'
 
 - `-uploads` is required: IIS has no standard upload directory, so the agent never guesses
   one. Without it the job returns `needs_configuration`.
+- `-state` sets the local role cache. `-heartbeat-interval` defaults to `1m` and
+  `-role-interval` to `1h`. Run the agent as `LocalSystem` for full registry coverage.
 - `-web-logs` accepts comma-separated paths or glob patterns. Globs are expanded and only
   the four newest matches are uploaded, so the server limit (260 artifacts = 256 uploads +
   4 logs) is never exceeded. IIS logs are sent with kind `iis_log`.
@@ -91,7 +98,7 @@ NSSM is convenient for a lab; WinSW is an alternative. Example with NSSM:
 
 ```powershell
 nssm install dfir-agent "C:\dfir\dfir-agent.exe"
-nssm set dfir-agent AppParameters "-server http://dfir.example:8080 -host-id win-lab -uploads C:\inetpub\wwwroot\uploads -web-config C:\Windows\System32\inetsrv\config\applicationHost.config -web-logs C:\inetpub\logs\LogFiles\W3SVC*\*.log"
+nssm set dfir-agent AppParameters "-server http://dfir.example:8080 -state C:\ProgramData\dfir-agent\host_state.json -uploads C:\inetpub\wwwroot\uploads -web-config C:\Windows\System32\inetsrv\config\applicationHost.config -web-logs C:\inetpub\logs\LogFiles\W3SVC*\*.log"
 nssm set dfir-agent AppEnvironmentExtra "DFIR_AGENT_TOKEN=<agent-token>"
 nssm set dfir-agent AppStdout "C:\dfir\agent.log"
 nssm set dfir-agent AppStderr "C:\dfir\agent.err.log"

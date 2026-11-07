@@ -36,7 +36,7 @@ cd ProjectIII
 ## Step 1 — start the coordination server
 
 ```bash
-make lab-init     # creates .env with two random tokens (safe to re-run)
+make lab-init     # creates .env with tokens + DFIR_HOSTS=* (safe to re-run)
 make lab-up       # builds and starts the dfir-server container
 ```
 
@@ -44,16 +44,27 @@ What this did:
 
 - `.env` (gitignored) now holds `DFIR_OPERATOR_TOKEN` (console/API access)
   and `DFIR_AGENT_TOKEN` (what the Windows agent presents). Keep both secret.
-- Evidence, job manifests, the TI settings, the whitelist and the verdict
-  cache live in `./data/` on the Linux machine (gitignored as well).
+- Evidence, job manifests, host inventory (`data/hosts/`), the TI settings,
+  the whitelist and the verdict cache live in `./data/` on the Linux machine
+  (gitignored as well).
 - The console is at `http://localhost:8080/` (LAN: `http://<linux-ip>:8080/`).
+- The lab defaults to `DFIR_HOSTS=*`: any machine that presents the agent
+  token is accepted and its **hostname** becomes its host ID. To switch to
+  an explicit allowlist, set a comma-separated list before `make lab-up`,
+  for example `DFIR_HOSTS=lab-ubuntu,win-web01,win-dc01`.
+- Existing `.env` files created before this change may not contain
+  `DFIR_HOSTS`. Re-run `make lab-init` (it appends the missing line) or add
+  `DFIR_HOSTS=*` manually, then restart the server. If the file already has
+  an old allowlist such as `DFIR_HOSTS=lab-ubuntu`, change it to `*` (or add
+  your Windows hostname) for automatic hostname registration.
 
 Port already in use? Add `DFIR_CONSOLE_PORT=18080` to `.env` and re-run
 `make lab-up`.
 
-> Do **not** run `make lab-up-web` in this setup: the optional Linux `web`
-> container shares the server's single host ID and would steal jobs from
-> your Windows agent (Windows scenarios would come back `skipped`).
+> The optional Linux `web` container uses the `lab-ubuntu` host ID by
+> default (`DFIR_WEB_HOST_ID`). Its hostname is `lab-ubuntu`, so a Windows
+> machine normally registers under its own hostname without a collision.
+> Windows scenarios on the Linux agent come back `skipped`.
 
 ## Step 2 — build the Windows agent
 
@@ -103,13 +114,21 @@ and run the agent in a PowerShell window:
 $env:DFIR_AGENT_TOKEN = '<DFIR_AGENT_TOKEN from .env>'
 C:\dfir\dfir-agent.exe `
   -server http://<linux-ip>:8080 `
-  -host-id lab-ubuntu `
   -interval 5s
 ```
 
-- `-host-id` **must** be `lab-ubuntu` (the host ID the server authorizes).
+- `-host-id` is **optional**. When omitted, the agent uses the machine
+  hostname (lowercased), so `WIN-WEB01` becomes `win-web01`. The server
+  prints the resolved ID in the agent log at startup.
+- Pass `-host-id <id>` only when you want an explicit ID, for example to
+  disambiguate two machines with the same hostname or to keep a stable ID
+  after a rename.
 - The agent is silent while idle — no output means no jobs yet, which is
   correct. It never opens a port for inbound connections.
+- The agent sends an inventory heartbeat every minute and detects its roles
+  at startup and every hour. The local role cache defaults to
+  `%ProgramData%\dfir-agent\host_state.json`; override it with `-state`.
+  Run as Administrator/LocalSystem for full registry coverage.
 - Optional flags for the other scenarios:
   - `-eventlog-channels 'System,Application,Security'` — `Security`
     requires an Administrator PowerShell.
@@ -151,8 +170,12 @@ add a key and press **Re-run check**.
 From the Linux machine:
 
 ```bash
-make lab-job SCENARIO=netstat.v1
+make lab-job SCENARIO=netstat.v1 HOST=<host-id>
 ```
+
+In wildcard mode (`DFIR_HOSTS=*`) `HOST` is required; use the ID shown on
+the **Machines** page (the lowercased hostname). With an explicit
+`DFIR_HOSTS` list, `HOST` defaults to the first ID in that list.
 
 Expect `status: completed` with a `netstat_snapshot` artifact. The server
 then enriches it automatically — open the job in the console and you get:
@@ -168,9 +191,9 @@ then enriches it automatically — open the job in the console and you get:
 Try the other scenarios the same way:
 
 ```bash
-make lab-job SCENARIO=eventlog.v1    # one event_log artifact per channel
-make lab-job SCENARIO=webshell.v1    # requires -uploads on the agent (IIS)
-make lab-job SCENARIO=hostrole.v1    # one host_role artifact with the detected roles
+make lab-job SCENARIO=eventlog.v1 HOST=<host-id>    # one event_log artifact per channel
+make lab-job SCENARIO=webshell.v1 HOST=<host-id>    # requires -uploads on the agent (IIS)
+make lab-job SCENARIO=hostrole.v1 HOST=<host-id>    # one host_role artifact with the detected roles
 ```
 
 The `hostrole.v1` job opens the collection detail and shows a **Host role**
@@ -178,6 +201,13 @@ section: the primary role, every scored role with its confidence and tier, and
 the evidence behind each one. Role detection is read-only and uses no
 configuration flags; run the agent elevated (LocalSystem) for full registry
 coverage.
+
+Open the **Machines** tab in the top bar to see the inventory: effective
+roles, automatic role confidence, OS/build, source, status and last seen.
+Filters cover search text, roles, OS, host class, source and status. Open a
+machine to set a **manual role override** (it replaces the automatic set and
+the agent stops re-detecting) or **Reset to automatic**. The agent applies a
+change on its next heartbeat; the sheet shows the revision it has applied.
 
 Download evidence from the console, or verify hashes from the shell:
 
@@ -196,7 +226,7 @@ works too):
 
 ```powershell
 nssm install dfir-agent "C:\dfir\dfir-agent.exe"
-nssm set dfir-agent AppParameters "-server http://<linux-ip>:8080 -host-id lab-ubuntu -eventlog-channels System,Application,Security"
+nssm set dfir-agent AppParameters "-server http://<linux-ip>:8080 -eventlog-channels System,Application,Security"
 nssm set dfir-agent AppEnvironmentExtra "DFIR_AGENT_TOKEN=<agent-token>"
 nssm set dfir-agent AppStdout "C:\dfir\agent.log"
 nssm set dfir-agent AppStderr "C:\dfir\agent.err.log"
@@ -226,7 +256,9 @@ Old jobs and evidence in `./data/` are untouched by an update.
 | --- | --- |
 | Job stuck `queued` | No agent is polling. Check the agent window on Windows and `Test-NetConnection <linux-ip> -Port 8080`. |
 | Agent logs `poll: HTTP 401` | Agent token mismatch — use the exact `DFIR_AGENT_TOKEN` from `.env`. |
-| Agent logs `poll: HTTP 400 unsupported host` | `-host-id` is not `lab-ubuntu`. |
+| Agent logs `poll: HTTP 400 unsupported host` / `403 unauthorized host` | The server is in allowlist mode and the agent's ID is not in `DFIR_HOSTS`. Set `DFIR_HOSTS=*` or add the ID, then restart the server. |
+| Machine stays `Never seen` in the inventory | The agent has not heartbeated: check `-server`, the agent token and `X-Host-ID`/`-host-id`. |
+| Manual roles show "waiting for the agent" | The agent is offline or has not sent its next heartbeat yet (default 1 minute). |
 | Agent prints `HTTP allowed only on loopback` and exits | The exe on that machine predates the current build — recopy it and check the SHA-256. |
 | `webshell.v1` returns `needs_configuration` | `-uploads` missing or not an existing directory (IIS has no default). |
 | `webshell.v1` returns `skipped` | No IIS on that machine — by design (role detection via `applicationHost.config`). |
@@ -253,8 +285,7 @@ make lab-clean    # stop and delete ./data/, .env and leftover certs (full reset
   wire. Keep it on a trusted network and never expose port 8080 to the
   Internet. Both binaries still support TLS (`-tls-cert`/`-tls-key` on the
   server, `-tls-ca` on the agent) for later.
-- One operator token, one agent token, one authorized host ID per server
-  instance. Multi-user/RBAC is out of scope for the prototype.
+- One operator token and one agent token shared by all hosts; there is no per-host agent identity. In wildcard mode (`DFIR_HOSTS=*`) any token holder can register any valid hostname. Multi-user/RBAC is out of scope for the prototype.
 - The VirusTotal key never leaves the server; queries carry only the
   filtered public indicators. Verdicts are third-party opinions at query
   time, not proof of compromise — the report records query time and cache

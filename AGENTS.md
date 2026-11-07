@@ -7,8 +7,11 @@ change.
 ## What this repository is
 
 - `cmd/dfir-server` — coordination server (Go): job queue, evidence store,
-  operator API, embedded web console.
-- `cmd/dfir-agent` — Windows endpoint agent (Go): scenario collectors.
+  host inventory + role overrides (`data/hosts/`), operator API, embedded
+  web console.
+- `cmd/dfir-agent` — Windows endpoint agent (Go): scenario collectors plus an
+  inventory heartbeat and a local role cache (`internal/agent/state.go`). The
+  host ID defaults to the machine hostname; `-host-id` is an override.
 - `internal/collector/*` — one package per scenario (`webshell`, `netstat`,
   `eventlog`, `hostrole`); pure rendering/correlation logic is platform-neutral
   and unit-tested on Linux, OS APIs live in `*_windows.go`.
@@ -51,17 +54,18 @@ src/
   api/        client.ts (only fetch wrapper), types.ts (all API payloads),
               queries.ts (query keys + hooks + mutations)
   hooks/      useSession, useTheme
-  lib/        format (time/bytes), download, jobFilters
   components/
-    ui/       primitives: Button, Chip, Tag, Field, Dialog, Toasts, ...
-    layout/   TopBar, ConnectView, Dashboard
-    jobs/     stats, filters, list, new-collection dialog
-    detail/   collection sheet, facts, artifacts, downloads
-    ti/       triage section, findings/connections/DNS tables, verdict chips
-    settings/ Threat Intel dialog: VirusTotal card + white/blacklist manager
+    ui/         primitives: Button, Chip, Tag, Field, Dialog, Toasts, ...
+    layout/     TopBar, ConnectView, Dashboard
+    jobs/       stats, filters, list, new-collection dialog
+    detail/     collection sheet, facts, artifacts, downloads
+    inventory/  Machines page, host list/filters, role editor, detail sheet
+    ti/         triage section, findings/connections/DNS tables, verdict chips
+    settings/   Threat Intel dialog: VirusTotal card + white/blacklist manager
+  lib/        format (time/bytes), download, jobFilters, hostRoles, hostFilters
   styles/     tokens.css (the only literal colors), base.css, components.css
   dev/        Gallery.tsx — dev-only primitive gallery (?gallery)
-  test/       setup, fixtures, MSW handlers, token/contrast tests
+  test/       setup, fixtures, host fixtures, MSW handlers, token/contrast tests
 ```
 
 Rules:
@@ -112,6 +116,11 @@ meaning never depends on hue alone.
 primitives, add a route entry in `App.tsx`, add a test, and (if it is
 user-visible) a sentence in `README.md`.
 
+**A new inventory field or filter**: add it to `protocol.Host` /
+`HostReport` first, persist it in `cmd/dfir-server/hosts.go`, expose it in
+`api/types.ts`, then render it in `components/inventory/`. Manual role edits
+must bump `role_revision` and never rewrite historical artifacts.
+
 **A new API endpoint**: implement it in Go, add the type to
 `api/types.ts`, the call in `api/queries.ts`, and an MSW handler + test.
 
@@ -138,3 +147,10 @@ user-visible) a sentence in `README.md`.
 - Collectors never run arbitrary commands; only vetted system binaries with
   fixed arguments (`wevtutil`, `Get-DnsClientCache`) and no symlink
   following.
+- Host inventory records are operator-visible metadata, not evidence: they
+  contain role IDs, OS/build and timestamps, never file contents or secrets.
+  Manual role overrides are stored on the server and cached locally by the
+  agent; historical `host_role` artifacts are immutable.
+- Multi-host authorization is a shared lab token plus either a wildcard
+  (`-hosts '*'`, any valid hostname) or a configured host-ID list. Do not
+  present it as per-host identity or enrollment.

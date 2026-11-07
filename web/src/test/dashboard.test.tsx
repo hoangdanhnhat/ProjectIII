@@ -2,7 +2,7 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Dashboard } from "../components/layout/Dashboard";
-import { META } from "./fixtures";
+import { EMPTY_META, META } from "./fixtures";
 import { calls, resetCalls, server } from "./msw";
 import { renderApp } from "./render";
 
@@ -23,6 +23,11 @@ describe("dashboard", () => {
     expect(screen.getByText("netstat.v1")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Completed/ })).toBeInTheDocument();
     expect(screen.getByText("1 total")).toBeInTheDocument();
+  });
+
+  it("explains when no machine has checked in yet", () => {
+    renderApp(<Dashboard token="test-token" meta={EMPTY_META} />);
+    expect(screen.getByText(/No machines have checked in yet/)).toBeInTheDocument();
   });
 
   it("filters by search text", async () => {

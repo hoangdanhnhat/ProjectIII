@@ -1,28 +1,6 @@
-import type { Artifact, HostRole, HostRoleProfile, Job, Kind } from "../../api/types";
+import type { Artifact, HostRoleProfile, Job, Kind } from "../../api/types";
 import { useArtifactJSON } from "../../api/queries";
-
-const ROLE_LABELS: Record<HostRole, string> = {
-  domain_controller: "Domain controller",
-  web_server: "Web server (IIS)",
-  file_server: "File server (SMB)",
-  database_server: "Database server (MSSQL)",
-  mail_server: "Mail server (Exchange)",
-  dns_server: "DNS server",
-  dhcp_server: "DHCP server",
-};
-
-const TIER_LABELS: Record<HostRoleProfile["roles"][number]["tier"], string> = {
-  confirmed: "Confirmed",
-  probable: "Probable",
-  possible: "Possible",
-};
-
-const HOST_CLASS_LABELS: Record<HostRoleProfile["host"]["host_class"], string> = {
-  domain_controller: "domain controller",
-  server: "server",
-  workstation: "workstation",
-  unknown: "host",
-};
+import { HOST_CLASS_LABELS, ROLE_LABELS, TIER_LABELS } from "../../lib/hostRoles";
 
 function lastArtifact(job: Job, kind: Kind): Artifact | null {
   let found: Artifact | null = null;
@@ -65,8 +43,8 @@ export function HostRoleCard({ job, token }: { job: Job; token: string }) {
           <p className="role-host">{hostSummary(profile, job.host_id)}</p>
           {profile.roles.length === 0 ? (
             <div className="mini-empty">
-              No server role was detected — this looks like a{" "}
-              {HOST_CLASS_LABELS[profile.host.host_class] ?? "host"}.
+              No host role was detected — this looks like a{" "}
+              {(HOST_CLASS_LABELS[profile.host.host_class] ?? "host").toLowerCase()}.
             </div>
           ) : (
             <div className="role-list">

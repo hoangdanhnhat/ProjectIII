@@ -74,7 +74,12 @@ export function Dashboard({ token, meta }: DashboardProps) {
           <div className="eyebrow">Operations</div>
           <h1>Collections</h1>
           <p className="lede">
-            Host {meta.host_id} · {meta.scenarios.join(", ")}
+            {meta.hosts.length === 0
+              ? "No machines have checked in yet"
+              : meta.hosts.length > 1
+                ? `${meta.hosts.length} managed machines`
+                : `Host ${meta.hosts[0]}`}{" "}
+            · {meta.scenarios.join(", ")}
           </p>
         </div>
         <div className="page-actions">
@@ -120,6 +125,7 @@ export function Dashboard({ token, meta }: DashboardProps) {
         onClose={() => setNewOpen(false)}
         token={token}
         defaultHost={meta.host_id}
+        hosts={meta.hosts}
         scenarios={meta.scenarios}
         onCreated={handleCreated}
       />

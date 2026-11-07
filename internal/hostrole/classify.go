@@ -39,7 +39,7 @@ func Classify(f *Facts) []RoleResult {
 
 	add(RoleDomainController, domainControllerEvidence(f))
 	add(RoleWebServer, webServerEvidence(f))
-	add(RoleFileServer, fileServerEvidence(f))
+	add(RoleWorkstation, workstationEvidence(f))
 	add(RoleDatabaseServer, databaseEvidence(f))
 	add(RoleMailServer, mailEvidence(f))
 	add(RoleDNSServer, dnsEvidence(f))
@@ -119,24 +119,15 @@ func webServerEvidence(f *Facts) []Evidence {
 	return evidence
 }
 
-func fileServerEvidence(f *Facts) []Evidence {
-	var evidence []Evidence
-	custom := CustomShares(f.Shares)
-	if len(custom) > 0 {
-		names := make([]string, 0, len(custom))
-		for _, share := range custom {
-			names = append(names, share.Name)
-		}
-		evidence = append(evidence, Evidence{
-			Strength: StrengthDefinitive,
-			Source:   `registry:HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Shares`,
-			Detail:   "non-default SMB share(s): " + strings.Join(names, ", "),
-		})
+func workstationEvidence(f *Facts) []Evidence {
+	if f.ProductType != "WinNT" {
+		return nil
 	}
-	if svc, ok := f.Service("LanmanServer"); ok && svc.Enabled() {
-		evidence = append(evidence, serviceEvidence("LanmanServer", svc, StrengthSupporting))
-	}
-	return evidence
+	return []Evidence{{
+		Strength: StrengthDefinitive,
+		Source:   `registry:HKLM\SYSTEM\CurrentControlSet\Control\ProductOptions`,
+		Detail:   "ProductType=WinNT declares a workstation",
+	}}
 }
 
 func databaseEvidence(f *Facts) []Evidence {
