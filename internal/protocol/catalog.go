@@ -15,6 +15,7 @@ var Scenarios = []Scenario{
 	{ID: ScenarioWebshell, Kinds: []Kind{KindUpload, KindApacheLog, KindIISLog}},
 	{ID: ScenarioNetstat, Kinds: []Kind{KindNetstatSnapshot, KindTIReport}},
 	{ID: ScenarioEventlog, Kinds: []Kind{KindEventLog}},
+	{ID: ScenarioHostRole, Kinds: []Kind{KindHostRole}},
 }
 
 // ScenarioByID looks up a scenario in the catalog.

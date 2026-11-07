@@ -1,4 +1,4 @@
-import type { Job, Snapshot, TISettings, TIReport } from "../api/types";
+import type { HostRoleProfile, Job, Snapshot, TISettings, TIReport } from "../api/types";
 
 export const META = { host_id: "lab-ubuntu", scenarios: ["webshell.v1", "netstat.v1", "eventlog.v1"] };
 
@@ -35,6 +35,75 @@ export const JOB: Job = {
       modified_at: "2026-11-05T08:00:05Z",
       collected_at: "2026-11-05T08:00:05Z",
       stored_at: "artifacts/job/rep1",
+    },
+  ],
+};
+
+export const HOST_ROLE: HostRoleProfile = {
+  schema_version: 1,
+  generated_at: "2026-11-05T08:00:04Z",
+  method: "registry+service+filesystem-metadata",
+  host: {
+    hostname: "WIN-WEB01",
+    product_type: "ServerNT",
+    host_class: "server",
+    os_name: "Windows Server 2022 Standard",
+    os_build: "20348.1000",
+  },
+  primary_role: "web_server",
+  roles: [
+    {
+      role: "web_server",
+      confidence: 1,
+      tier: "confirmed",
+      evidence: [
+        {
+          strength: "definitive",
+          source: "file:%SystemRoot%\\System32\\inetsrv\\config\\applicationHost.config",
+          detail: "IIS configuration file present",
+        },
+        {
+          strength: "strong",
+          source: "service:W3SVC",
+          detail: "service present, Start=auto",
+        },
+      ],
+    },
+    {
+      role: "file_server",
+      confidence: 0.65,
+      tier: "probable",
+      evidence: [
+        {
+          strength: "definitive",
+          source: "registry:HKLM\\SYSTEM\\CurrentControlSet\\Services\\LanmanServer\\Shares",
+          detail: "non-default SMB share(s): Deploy",
+        },
+      ],
+    },
+  ],
+};
+
+export const ROLE_JOB: Job = {
+  id: "role-job-0001",
+  host_id: "win-web01",
+  scenario: "hostrole.v1",
+  created_at: "2026-11-05T08:00:00Z",
+  started_at: "2026-11-05T08:00:01Z",
+  ended_at: "2026-11-05T08:00:04Z",
+  status: "completed",
+  artifacts: [
+    {
+      id: "role1",
+      kind: "host_role",
+      source: "host_role.json",
+      reason: "host role profile",
+      sha256: "c".repeat(64),
+      size: 3456,
+      mode: "synthesized",
+      modified_at: "2026-11-05T08:00:04Z",
+      collected_at: "2026-11-05T08:00:04Z",
+      stored_at: "artifacts/role-job/role1",
     },
   ],
 };

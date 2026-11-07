@@ -13,7 +13,8 @@ export type Kind =
   | "iis_log"
   | "netstat_snapshot"
   | "event_log"
-  | "ti_report";
+  | "ti_report"
+  | "host_role";
 
 export type JobStatus =
   | "queued"
@@ -147,6 +148,48 @@ export interface Snapshot {
   generated_at: string;
   connections: SnapshotConnection[];
   dns_cache?: DNSRecord[];
+}
+
+export type HostRole =
+  | "domain_controller"
+  | "web_server"
+  | "file_server"
+  | "database_server"
+  | "mail_server"
+  | "dns_server"
+  | "dhcp_server";
+
+export type HostRoleTier = "confirmed" | "probable" | "possible";
+
+export type HostRoleStrength = "definitive" | "strong" | "supporting";
+
+export interface HostRoleEvidence {
+  strength: HostRoleStrength;
+  source: string;
+  detail: string;
+}
+
+export interface HostRoleResult {
+  role: HostRole;
+  confidence: number;
+  tier: HostRoleTier;
+  evidence: HostRoleEvidence[];
+}
+
+export interface HostRoleProfile {
+  schema_version: number;
+  generated_at: string;
+  method: string;
+  host: {
+    hostname: string;
+    product_type?: string;
+    host_class: "domain_controller" | "server" | "workstation" | "unknown";
+    os_name?: string;
+    os_build?: string;
+  };
+  primary_role?: HostRole;
+  roles: HostRoleResult[];
+  probe_errors?: Array<{ source: string; detail: string }>;
 }
 
 export type ListName = "whitelist" | "blacklist";

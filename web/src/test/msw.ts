@@ -1,6 +1,6 @@
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
-import { JOB, REPORT, SNAPSHOT, TI_SETTINGS } from "./fixtures";
+import { HOST_ROLE, JOB, REPORT, SNAPSHOT, TI_SETTINGS } from "./fixtures";
 
 export const calls: Array<{ method: string; path: string; body: unknown }> = [];
 
@@ -24,6 +24,7 @@ export const handlers = [
   http.get("*/v1/jobs/:id/artifacts/:artifact", ({ params }) => {
     if (params.artifact === "rep1") return HttpResponse.json(REPORT);
     if (params.artifact === "snap1") return HttpResponse.json(SNAPSHOT);
+    if (params.artifact === "role1") return HttpResponse.json(HOST_ROLE);
     return new HttpResponse(null, { status: 404 });
   }),
 

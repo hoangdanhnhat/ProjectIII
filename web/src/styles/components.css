@@ -1332,6 +1332,98 @@
 }
 
 /* -------------------------------------------------------------------------
+   Host role profile
+   ------------------------------------------------------------------------- */
+
+.role-host {
+  margin-bottom: 9px;
+  color: var(--text-soft);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.role-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.role-row {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.role-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.role-name {
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.role-confidence {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.role-bar {
+  height: 4px;
+  margin-top: 7px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.role-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--text-soft);
+}
+
+.role-evidence {
+  margin-top: 7px;
+}
+
+.role-evidence summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.role-evidence-list {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  color: var(--text-soft);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.role-evidence-list li + li {
+  margin-top: 3px;
+}
+
+.role-evidence-source {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+
+.role-note {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* -------------------------------------------------------------------------
    Settings dialog
    ------------------------------------------------------------------------- */
 

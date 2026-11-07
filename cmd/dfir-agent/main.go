@@ -21,6 +21,7 @@ import (
 	"example.com/dfir-collector/internal/agent"
 	"example.com/dfir-collector/internal/collector"
 	"example.com/dfir-collector/internal/collector/eventlog"
+	hostrolecollector "example.com/dfir-collector/internal/collector/hostrole"
 	"example.com/dfir-collector/internal/collector/netstat"
 	"example.com/dfir-collector/internal/collector/webshell"
 )
@@ -75,6 +76,7 @@ func main() {
 		webshell.New(webshell.Options{UploadsDir: *uploads, WebConfig: *webConfig, WebLogs: *webLogs}),
 		netstat.New(),
 		eventlog.New(eventlog.Options{Channels: eventlog.SplitChannels(*eventlogChannels)}),
+		hostrolecollector.New(hostrolecollector.Options{}),
 	)
 	a := agent.New(agent.Options{
 		ServerURL: *base,

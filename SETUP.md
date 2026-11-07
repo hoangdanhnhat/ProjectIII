@@ -170,7 +170,14 @@ Try the other scenarios the same way:
 ```bash
 make lab-job SCENARIO=eventlog.v1    # one event_log artifact per channel
 make lab-job SCENARIO=webshell.v1    # requires -uploads on the agent (IIS)
+make lab-job SCENARIO=hostrole.v1    # one host_role artifact with the detected roles
 ```
+
+The `hostrole.v1` job opens the collection detail and shows a **Host role**
+section: the primary role, every scored role with its confidence and tier, and
+the evidence behind each one. Role detection is read-only and uses no
+configuration flags; run the agent elevated (LocalSystem) for full registry
+coverage.
 
 Download evidence from the console, or verify hashes from the shell:
 
@@ -223,6 +230,7 @@ Old jobs and evidence in `./data/` are untouched by an update.
 | Agent prints `HTTP allowed only on loopback` and exits | The exe on that machine predates the current build — recopy it and check the SHA-256. |
 | `webshell.v1` returns `needs_configuration` | `-uploads` missing or not an existing directory (IIS has no default). |
 | `webshell.v1` returns `skipped` | No IIS on that machine — by design (role detection via `applicationHost.config`). |
+| `hostrole.v1` has `probe_errors` | A registry key or file was unreadable; run the agent as LocalSystem/Administrator for full coverage. The profile still lists roles supported by the remaining evidence. |
 | `eventlog.v1` returns `partial` with access denied | The `Security` channel needs an Administrator agent. |
 | Job `ti_status` is `skipped` | No VirusTotal key configured — add it in the console and press **Re-run check**. |
 | Job `ti_status` is `partial` | Some VT queries failed (invalid key or HTTP 429) — the reason on the job names the error; wait a minute and re-run. |

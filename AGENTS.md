@@ -10,8 +10,11 @@ change.
   operator API, embedded web console.
 - `cmd/dfir-agent` — Windows endpoint agent (Go): scenario collectors.
 - `internal/collector/*` — one package per scenario (`webshell`, `netstat`,
-  `eventlog`); pure rendering/correlation logic is platform-neutral and
-  unit-tested on Linux, OS APIs live in `*_windows.go`.
+  `eventlog`, `hostrole`); pure rendering/correlation logic is platform-neutral
+  and unit-tested on Linux, OS APIs live in `*_windows.go`.
+- `internal/hostrole` — Windows server-role classifier shared by collectors:
+  facts probe in `windows.go`, pure scoring in `classify.go`, versioned
+  `host_role` profile in `render.go`.
 - `internal/ti` — threat-intel engine: settings, white/black lists,
   VirusTotal client, enrichment.
 - `internal/webui` — embeds the React console build (`dist/`).

@@ -4,6 +4,7 @@ import { StatusChip } from "../jobs/StatusChip";
 import { Icon } from "../ui/Icon";
 import { Dialog } from "../ui/Dialog";
 import { ArtifactList } from "./ArtifactList";
+import { HostRoleCard } from "./HostRoleCard";
 import { JobFacts } from "./JobFacts";
 import { TISection } from "../ti/TISection";
 
@@ -52,6 +53,8 @@ export function JobDetailSheet({ job, token, onClose }: JobDetailSheetProps) {
           <JobFacts job={job} />
 
           {job.scenario === "netstat.v1" ? <TISection job={job} token={token} /> : null}
+
+          {job.scenario === "hostrole.v1" ? <HostRoleCard job={job} token={token} /> : null}
 
           <ArtifactList job={job} token={token} />
         </div>

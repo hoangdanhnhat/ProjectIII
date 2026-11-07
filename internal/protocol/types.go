@@ -5,6 +5,7 @@ import "time"
 const ScenarioWebshell = "webshell.v1"
 const ScenarioNetstat = "netstat.v1"
 const ScenarioEventlog = "eventlog.v1"
+const ScenarioHostRole = "hostrole.v1"
 
 type Kind string
 
@@ -15,6 +16,7 @@ const (
 	KindNetstatSnapshot Kind = "netstat_snapshot"
 	KindEventLog        Kind = "event_log"
 	KindTIReport        Kind = "ti_report"
+	KindHostRole        Kind = "host_role"
 )
 
 type Job struct {

@@ -12,6 +12,7 @@ const KIND_LABELS: Record<Kind, string> = {
   netstat_snapshot: "Netstat & DNS",
   event_log: "Event log",
   ti_report: "Threat Intel report",
+  host_role: "Host role",
 };
 
 interface ArtifactCardProps {
