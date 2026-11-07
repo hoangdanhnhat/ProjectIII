@@ -70,7 +70,7 @@ export function FindingsTable({ indicators, query, empty, onWhitelist, onBlackli
                   <td>
                     <div className="cell-main">
                       <Tag>{indicator.type === "ip" ? "IP" : "Domain"}</Tag>
-                      <span className="mono strong break">{indicator.value}</span>
+                      <span className="mono strong">{indicator.value}</span>
                     </div>
                     {indicator.blacklist_match ? (
                       <div className="cell-sub">

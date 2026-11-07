@@ -82,7 +82,9 @@ Rules:
    error) and inline `<script>` tags are blocked by the server CSP.
 5. **Styling**: classes from `styles/components.css`; colors only via
    `var(--token)`; no literal hex outside `styles/tokens.css` (Stylelint).
-   Inline `style` is only for one-off layout (width, height), never color.
+   Type, space, radius, motion and layout scales are tokens too; add a value
+   to `tokens.css` before using it. Inline `style` is only for one-off layout
+   (width, height), never color.
 6. **Both themes are mandatory.** Every visual change must be checked in
    light and dark (the token contrast test enforces AA for the documented
    pairs).
@@ -126,6 +128,10 @@ must bump `role_revision` and never rewrite historical artifacts.
 
 ## Front-end build
 
+- Faces are self-hosted in `web/public/fonts` (IBM Plex Sans variable and
+  IBM Plex Mono, both OFL) so the default-src 'self' CSP holds and the console
+  renders offline. `index.html` preloads them and `base.css` declares them;
+  never add a font CDN.
 - `web/vite.config.ts` sets `base: "/"` and writes straight into
   `internal/webui/dist/`, which `internal/webui` embeds.
 - `internal/webui/dist/.embed` is committed so `go build` works before a

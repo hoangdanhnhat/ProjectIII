@@ -55,15 +55,28 @@ const DARK = tokens('html[data-theme="dark"]');
 const TEXT_PAIRS: Array<[string, string]> = [
   ["text", "surface"],
   ["text", "bg"],
+  ["text", "surface-raised"],
   ["text-soft", "surface"],
   ["text-soft", "surface-2"],
+  ["text-soft", "surface-raised"],
   ["muted", "surface"],
   ["muted", "bg"],
+  ["muted", "surface-raised"],
   ["link", "surface"],
   ["danger", "danger-bg"],
   ["warn", "warn-bg"],
   ["ok", "ok-bg"],
   ["btn-primary-text", "btn-primary-bg"],
+];
+
+// Form boundaries and focus rings are non-text UI: WCAG 1.4.11 asks 3:1
+// against the adjacent surface.
+const UI_PAIRS: Array<[string, string]> = [
+  ["control-border", "surface"],
+  ["control-border", "surface-2"],
+  ["control-border", "surface-3"],
+  ["focus", "surface"],
+  ["focus", "surface-2"],
 ];
 
 describe("theme tokens", () => {
@@ -81,6 +94,15 @@ describe("theme tokens", () => {
         expect(set[bg], `${theme}: missing --${bg}`).toBeDefined();
         const ratio = contrast(set[fg], set[bg]);
         expect(ratio, `${theme}: ${fg} on ${bg} = ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+      }
+    });
+
+    it(`meets 3:1 for control boundaries and focus in ${theme}`, () => {
+      for (const [fg, bg] of UI_PAIRS) {
+        expect(set[fg], `${theme}: missing --${fg}`).toBeDefined();
+        expect(set[bg], `${theme}: missing --${bg}`).toBeDefined();
+        const ratio = contrast(set[fg], set[bg]);
+        expect(ratio, `${theme}: ${fg} on ${bg} = ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3);
       }
     });
   }

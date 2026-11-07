@@ -1,76 +1,148 @@
 /* Design tokens: the only place literal colors are allowed.
    Color carries meaning only (risk/success); everything else is neutral.
-   Contrast for the documented pairs is verified by src/test/tokens.test.ts. */
+   Contrast for the documented pairs is verified by src/test/tokens.test.ts.
+   Palette, type scale, spacing, radii and motion are the shared vocabulary;
+   component styles reference them and never hard-code these values. */
 
 :root {
   color-scheme: light;
 
-  --bg: #f7f8fa;
+  /* Surfaces and ink */
+  --bg: #f5f7f9;
   --surface: #ffffff;
-  --surface-2: #fafbfc;
-  --surface-3: #f2f4f6;
+  --surface-2: #f7f9fb;
+  --surface-3: #edf0f4;
+  --surface-raised: #ffffff;
 
-  --border: #e6e8eb;
-  --border-strong: #d5d9df;
+  --border: #e3e7ec;
+  --border-strong: #c9d1da;
+  --control-border: #808b9a;
 
-  --text: #17181a;
-  --text-soft: #4a4f57;
-  --muted: #6b7280;
-  --link: #35507d;
+  --text: #0f141a;
+  --text-soft: #3c4855;
+  --muted: #5c6976;
+  --link: #2d4f7d;
+  --focus: #2d4f7d;
 
-  --btn-primary-bg: #1f2328;
+  --code-bg: #eef1f5;
+  --selection-bg: #cfe0f5;
+  --selection-text: #0f141a;
+
+  /* Primary action */
+  --btn-primary-bg: #101820;
   --btn-primary-text: #ffffff;
-  --btn-primary-hover: #000000;
+  --btn-primary-hover: #263241;
 
-  --danger: #a33a32;
-  --danger-bg: #fbeeec;
-  --warn: #8a5f10;
-  --warn-bg: #fbf3e2;
-  --ok: #2f6b4f;
-  --ok-bg: #eaf4ee;
+  /* Risk and status: meaning, never decoration */
+  --danger: #a13029;
+  --danger-bg: #fbeceb;
+  --warn: #7f5306;
+  --warn-bg: #faf1de;
+  --ok: #1f6347;
+  --ok-bg: #e6f3eb;
 
-  --ring: rgba(23, 24, 26, 0.3);
-  --overlay: rgba(12, 14, 16, 0.4);
-  --shadow: 0 1px 2px rgba(16, 20, 24, 0.05);
-  --shadow-lg: 0 16px 48px rgba(9, 12, 16, 0.16);
+  --overlay: rgba(10, 14, 18, 0.44);
+  --shadow-sm: 0 1px 2px rgba(15, 20, 26, 0.06);
+  --shadow: 0 1px 2px rgba(15, 20, 26, 0.05), 0 10px 28px -18px rgba(15, 20, 26, 0.22);
+  --shadow-lg: 0 32px 88px -32px rgba(9, 13, 18, 0.3), 0 2px 10px rgba(9, 13, 18, 0.08);
 
-  --radius: 12px;
+  /* Type */
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.125rem;
+
+  --leading-none: 1;
+  --leading-tight: 1.15;
+  --leading-snug: 1.3;
+  --leading-normal: 1.55;
+  --leading-relaxed: 1.7;
+
+  --tracking-tight: -0.022em;
+  --tracking-snug: -0.012em;
+  --tracking-normal: 0;
+  --tracking-caps: 0.08em;
+
+  /* Space: one step per nesting level */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
+
+  /* Radii */
+  --radius-xs: 5px;
   --radius-sm: 8px;
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue",
-    Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
-    monospace;
+  --radius-md: 10px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-swift: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-1: 140ms;
+  --dur-2: 200ms;
+  --dur-3: 280ms;
+
+  /* Layout */
+  --topbar-h: 60px;
+  --page-max: 1240px;
+  --page-pad: 28px;
 }
 
 html[data-theme="dark"] {
   color-scheme: dark;
 
-  --bg: #0f1113;
-  --surface: #16191c;
-  --surface-2: #1b1f23;
-  --surface-3: #20252a;
+  --bg: #0a0e13;
+  --surface: #10151c;
+  --surface-2: #151b23;
+  --surface-3: #1c232d;
+  --surface-raised: #232b36;
 
-  --border: #262b30;
-  --border-strong: #343b42;
+  --border: #242c37;
+  --border-strong: #36404d;
+  --control-border: #616d7c;
 
-  --text: #e9ecef;
-  --text-soft: #b9c0c7;
-  --muted: #8b949e;
-  --link: #9db4d6;
+  --text: #edf1f5;
+  --text-soft: #b5bfcb;
+  --muted: #8a95a3;
+  --link: #9fbae0;
+  --focus: #9fbae0;
 
-  --btn-primary-bg: #e9ecef;
-  --btn-primary-text: #17181a;
+  --code-bg: #1a2029;
+  --selection-bg: #2b3b4f;
+  --selection-text: #edf1f5;
+
+  --btn-primary-bg: #edf1f5;
+  --btn-primary-text: #10151c;
   --btn-primary-hover: #ffffff;
 
-  --danger: #e08a84;
-  --danger-bg: #2a1a18;
-  --warn: #d9a95c;
-  --warn-bg: #2a2417;
-  --ok: #7fbf9e;
-  --ok-bg: #17251d;
+  --danger: #ef958e;
+  --danger-bg: #2a1917;
+  --warn: #dfb164;
+  --warn-bg: #282215;
+  --ok: #83c5a4;
+  --ok-bg: #12241a;
 
-  --ring: rgba(233, 236, 239, 0.35);
-  --overlay: rgba(0, 0, 0, 0.6);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 20px 60px rgba(0, 0, 0, 0.6);
+  --overlay: rgba(0, 0, 0, 0.66);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 10px 28px -18px rgba(0, 0, 0, 0.7);
+  --shadow-lg: 0 36px 100px -36px rgba(0, 0, 0, 0.88), 0 2px 10px rgba(0, 0, 0, 0.5);
 }

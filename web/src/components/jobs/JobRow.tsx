@@ -31,7 +31,8 @@ export function JobRow({ job, onSelect }: JobRowProps) {
           </span>
         </span>
         <span className="job-artifacts">
-          <strong>{job.artifacts.length}</strong> <span className="muted">artifacts</span>
+          <strong>{job.artifacts.length}</strong>{" "}
+          <span className="muted">{job.artifacts.length === 1 ? "artifact" : "artifacts"}</span>
         </span>
         <span className="job-time" title={job.created_at}>
           <span>{relative(job.created_at)}</span>

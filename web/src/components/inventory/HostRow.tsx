@@ -20,14 +20,8 @@ export function HostRow({ host, onSelect }: { host: Host; onSelect: (host: Host)
           <span className="host-name">{hostName(host)}</span>
           <span className="host-meta">
             <code className="mono">{host.host_id}</code>
-            <span className="dot">·</span>
             <span>{hostOSLabel(host)}</span>
-            {host.os.build ? (
-              <>
-                <span className="dot">·</span>
-                <span>{hostOSBuild(host)}</span>
-              </>
-            ) : null}
+            {host.os.build ? <span>{hostOSBuild(host)}</span> : null}
           </span>
         </span>
         <span className="host-roles">

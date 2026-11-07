@@ -31,20 +31,27 @@ export function TopBar({
     <header className="topbar">
       <div className="topbar-inner">
         <a className="brand" href={import.meta.env.BASE_URL} aria-label="Evidence Console home">
-          <span className="brand-name">Evidence Console</span>
-          <span className="brand-sub">DFIR</span>
+          <span className="brand-mark">
+            <Icon name="layers" />
+          </span>
+          <span className="brand-text">
+            <span className="brand-name">Evidence Console</span>
+            <span className="brand-sub">DFIR</span>
+          </span>
         </a>
         {connected ? (
           <nav className="topbar-nav" aria-label="Primary">
             <a
               className={view === "collections" ? "nav-link is-active" : "nav-link"}
               href="#/"
+              aria-current={view === "collections" ? "page" : undefined}
             >
               Collections
             </a>
             <a
               className={view === "machines" ? "nav-link is-active" : "nav-link"}
               href="#/machines"
+              aria-current={view === "machines" ? "page" : undefined}
             >
               Machines
             </a>

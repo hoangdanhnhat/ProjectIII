@@ -195,8 +195,13 @@ export default function Gallery({ theme, onToggleTheme }: GalleryProps) {
       <header className="topbar">
         <div className="topbar-inner">
           <div className="brand">
-            <span className="brand-name">Design system</span>
-            <span className="brand-sub">Gallery</span>
+            <span className="brand-mark">
+              <Icon name="layers" />
+            </span>
+            <span className="brand-text">
+              <span className="brand-name">Design system</span>
+              <span className="brand-sub">Gallery</span>
+            </span>
           </div>
           <div className="topbar-actions">
             <Button variant="ghost" small onClick={onToggleTheme}>
