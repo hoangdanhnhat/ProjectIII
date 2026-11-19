@@ -1,6 +1,6 @@
 # DFIR/CA evidence collector — server + Windows agent
 
-Prototype consisting of an orchestrating server and a **Windows agent**, both written in Go. The server runs in Docker on a Linux machine (or anywhere Go builds); the agent runs on the Windows endpoint being monitored and connects **outbound only** — it never listens for inbound connections. Current scope: Windows 10/11 and Windows Server 64-bit hosts, scenarios `netstat.v1`, `eventlog.v1`, `webshell.v1` and `hostrole.v1`, plus automated **Threat Intelligence triage** of network connections via VirusTotal.
+Prototype consisting of an orchestrating server and a **Windows agent**, both written in Go. The server runs in Docker on a Linux machine (or anywhere Go builds); the agent runs on the Windows endpoint being monitored and connects **outbound only** — it never listens for inbound connections. Current scope: Windows 10/11 and Windows Server 64-bit hosts, scenarios `netstat.v1`, `eventlog.v1`, `webshell.v1`, `hostrole.v1` and an opt-in `memory.v1`, plus automated **Threat Intelligence triage** of network connections via VirusTotal.
 
 > **Setting this up from scratch?** Follow the step-by-step guide in [SETUP.md](SETUP.md) — server, Windows agent, VirusTotal key and first collection, including troubleshooting.
 >
@@ -9,6 +9,8 @@ Prototype consisting of an orchestrating server and a **Windows agent**, both wr
 For `netstat.v1` the agent snapshots the TCP/UDP connection tables with owning processes **and the DNS client resolver cache** (read via `dnsapi.dll` with cache-only queries, generating zero network traffic; a `Get-DnsClientCache` fallback covers restricted hosts). Cached `A`/`AAAA`/`CNAME` records are correlated to connection remote addresses, so each connection records the domain name(s) it reached. When the job finishes, the server automatically triages the snapshot: public IPs and external domains (private/loopback/link-local addresses and whitelisted values are excluded) are checked against VirusTotal, and the verdicts land in the job as a `ti_report` artifact viewable in the web console. The result is **data for an investigation**, not an assertion of compromise.
 
 For `hostrole.v1` the agent classifies the Windows host against a small set of common host roles: **domain controller**, **web server (IIS)**, **workstation**, **database server (MSSQL)**, **mail server (Exchange)**, **DNS server** and **DHCP server**. It reads only registry keys, service installation keys and fixed file metadata (no file contents, no commands, no network) and emits a versioned `host_role` artifact. Roles carry evidence and a confidence tier (`confirmed` / `probable` / `possible`), so a host can legitimately be reported with several roles; the profile describes what is installed or configured, not what is currently serving traffic. The Windows product type (`WinNT` / `ServerNT` / `LanmanNT`) separates a workstation, a member server and a domain controller even when no server role is detected. Third-party web and database servers are out of scope in schema version 1.
+
+For `memory.v1` the agent runs an **operator-supplied, hash-pinned acquisition binary** (WinPmem) to capture a full physical-memory image, streams it to the server and records tool identity, argv, image size and SHA-256 in a `memory_manifest` artifact. The scenario is disabled until `-memory-tool`, `-memory-tool-sha256` and `-memory-out` are configured; it requires an elevated agent and enough free disk, and it is the only scenario allowed to upload an artifact above the default 10 MiB limit.
 
 ### Inventory and role overrides
 
@@ -28,12 +30,73 @@ For `webshell.v1` the agent checks the web server configuration file (IIS `appli
 | `eventlog.v1` | `event_log` | Windows event log channels as schema-versioned JSON (one artifact per channel) |
 | `webshell.v1` | `upload`, `iis_log` | Script-extension files from the configured upload directory + snapshots of the newest IIS logs |
 | `hostrole.v1` | `host_role` | Evidence-backed Windows host role profile (DC, IIS, workstation, MSSQL, Exchange, DNS, DHCP) from registry/service/file metadata |
+| `memory.v1` | `memory_image`, `memory_manifest` | Full physical-memory image from an operator-supplied, hash-pinned WinPmem binary + a manifest with tool identity, image SHA-256 and capture result. The server adds `volatility_plugin`/`volatility_report` analysis artifacts. Opt-in; memory images are the only artifacts above 10 MiB. |
+
+## Memory capture (`memory.v1`)
+
+Memory acquisition needs a kernel driver, so the agent does not implement it itself: it runs a vetted, operator-provided binary with fixed arguments, exactly like `wevtutil` for event logs. The tool is never downloaded or written by the agent, and its SHA-256 is checked at agent startup and again before every capture.
+
+```powershell
+# once per endpoint: place WinPmem, pin its digest and create a staging directory
+Get-FileHash C:\dfir\winpmem64.exe -Algorithm SHA256   # copy the hash
+New-Item -ItemType Directory -Path C:\dfir\memory -Force
+
+.\bin\dfir-agent.exe `
+  -server http://dfir.example:8080 `
+  -memory-tool 'C:\dfir\winpmem64.exe' `
+  -memory-tool-sha256 '<sha256>' `
+  -memory-tool-name winpmem-physical `
+  -memory-tool-version '4.0.1' `
+  -memory-out 'C:\dfir\memory'
+```
+
+Supported profiles: `winpmem` (WinPmem 4.0.1: `WinPmem64.exe <image>`), `winpmem-mini` (`winpmem_mini_x64_rc2.exe <image>`) and `winpmem-physical` (`WinPmem64.exe -1 <image>`); all pass the output path positionally, and the profile only changes the name and extra argv recorded in the manifest. When `-memory-tool-name` is omitted the profile is derived from the executable name. Without `-memory-tool` the scenario is registered but returns `needs_configuration`, so the other scenarios keep working.
+
+**Use `winpmem-physical` with the WinPmem 4.0.1 build in `utils/`.** Its default PTE remapping mode produced corrupt images on the Server 2016 lab VM (repeated pages and no kernel, so Volatility cannot parse them); `-1` produced a valid image. The analysis report names this explicitly when an image has no usable kernel layer.
+
+WinPmem reports a **completed acquisition with exit code 1** (its `main` returns the imaging status directly; exit code 0 is never used) and a failure with `-1`/`0xFFFFFFFF`. The `winpmem` profiles encode that convention: exit code 1 is accepted, recorded in the manifest, and explained in its notes; anything else fails the capture.
+
+Limits and behaviour:
+
+- The capture runs as the agent's account and requires an elevated token (`LocalSystem` or an Administrator); otherwise the job fails with an explicit reason and no tool run.
+- The server's `-max-memory-image` and the agent's `-memory-max-bytes` are independent limits and must be raised together. In the Docker lab, add the server flag to the `command` list in `compose.yaml`; on a plain server build, pass it on the command line.
+- Preflight requires free space in `-memory-out` of at least physical RAM + 256 MiB, and `-memory-max-bytes` must be at least physical RAM. The default is 16 GiB; the server's `-max-memory-image` (also 16 GiB) is the authoritative cap, so raise both for hosts with more RAM.
+- `-memory-timeout` (default `1h`) kills the tool. A cancelled or failed capture never uploads a truncated image; a retried job reuses a complete image left in `-memory-out` by the previous attempt instead of capturing again. A killed WinPmem process can leave its driver loaded until the next reboot; prefer a timeout that fits the host's RAM.
+- The acquisition binary must match the agent architecture (build and run the agent as `amd64`). Point `-memory-tool` at the vendor binary; the agent never downloads it.
+- WinPmem 4.0.1 ships a test-signed driver; the endpoint must have test signing enabled (`bcdedit /set testsigning on` and reboot), otherwise Windows reports `ERROR_DRIVER_BLOCKED` (0x241).
+- The raw image is uploaded with one streamed HTTP request (no in-memory buffering and no resume); the server verifies size and SHA-256 while writing. The local image is deleted after both the image and manifest are accepted unless `-memory-keep` is set.
+- `job.since` does not apply: the image is a point-in-time snapshot of a live system. Pagefile and hibernation file are not included, and memory can change during acquisition; the manifest records these caveats.
+- Images above 512 MiB are not downloaded through the browser (a blob download would buffer the whole file in the tab). The console shows a copyable `curl` command instead, using `$DFIR_OPERATOR_TOKEN` from the shell.
+
+**Treat a memory image as the most sensitive artifact this system can hold** — credentials, keys and plaintext secrets may be inside it. The lab runs plain HTTP; use TLS (or an isolated network) and restrict access to `data/` before capturing memory on a real endpoint.
+
+### Memory analysis (Volatility 3)
+
+The server analyzes each completed `memory.v1` image automatically (disable with `-vol-auto=false`) and on demand from the console. It runs the pinned **VolGolangWrapper** binary against **Volatility 3 2.28.2** (the stable release, pinned from PyPI) with a curated Windows plugin set:
+
+```text
+windows.info.Info              windows.pslist.PsList
+windows.pstree.PsTree          windows.cmdline.CmdLine
+windows.netscan.NetScan        windows.dlllist.DllList
+windows.modules.Modules        windows.svcscan.SvcScan
+windows.malware.malfind.Malfind
+windows.registry.hivelist.HiveList
+windows.amcache.Amcache        windows.getsids.GetSIDs
+```
+
+Override the list with `-vol-plugins <file>` (one plugin per line). Results are derived evidence next to the image: `volatility_plugin` artifacts in JSONL (one per plugin) and a `volatility_report` summary with the engine version, image hash, per-plugin rows/duration/status/errors and notes. The console's **Memory analysis** card shows the summary and a searchable table for each plugin, plus **Re-run analysis**; re-running replaces the previous analysis artifacts, never the image.
+
+- The Docker server image includes Python, Volatility 3 and the wrapper. Symbols for the target build are downloaded on first use into `data/volatility/symbols` (persisted) and the identifier cache into `data/volatility/cache`. Offline deployments must pre-seed the symbol directory.
+- One analysis runs at a time. The wrapper is CPU-pinned with `taskset` (default `0-3`), bounded by `-vol-timeout` (15m) and a 64 MiB per-plugin output cap.
+- Relevant flags: `-volatility`, `-vol-wrapper`, `-vol-symbols`, `-vol-cache`, `-vol-plugins`, `-vol-auto`, `-vol-timeout`, `-vol-max-output`, `-vol-cpus`. The Docker command sets the tool paths; a server built outside Docker leaves analysis disabled until they are provided.
+- In-server execution means the Volatility parser processes untrusted images inside the server container. It gets a filtered environment (no operator/agent tokens), fixed argv, no shell and a process-group timeout, but the container is still the server's; move the runner to an isolated service if that matters for your deployment.
+- Volatility 3 is licensed under the Volatility Software License and the wrapper repository currently has no license file. The Docker image builds the wrapper from the pinned upstream commit and installs the stable PyPI release; review both licenses before redistributing the image or its contents.
 
 ## Quick start: Docker server + Windows agent
 
 > The full walkthrough with troubleshooting lives in [SETUP.md](SETUP.md); this is the condensed version.
 
-Requirements: a Linux machine with Docker + compose v2, `openssl` and `make`; a Windows 10/11 64-bit machine with PowerShell (Administrator for `eventlog.v1` with the `Security` channel); both on the same trusted network (the lab currently runs plain HTTP, see the security notes below).
+Requirements: a Linux machine with Docker + compose v2, `openssl` and `make`; a Windows 10/11 64-bit machine with PowerShell (Administrator for `eventlog.v1` with the `Security` channel and for `memory.v1`); both on the same trusted network (the lab currently runs plain HTTP, see the security notes below).
 
 ```bash
 make lab-init                          # once: random tokens in .env (gitignored)
@@ -73,6 +136,7 @@ Create a job from the Linux machine and wait for the result:
 ```bash
 make lab-job SCENARIO=netstat.v1 HOST=<host-id>     # expect: completed, 1 artifact netstat_snapshot
 make lab-job SCENARIO=eventlog.v1 HOST=<host-id>    # expect: completed, 1 artifact event_log per channel
+make lab-job SCENARIO=memory.v1 HOST=<host-id>      # expect: completed, memory_image + memory_manifest (agent needs -memory-* flags)
 ```
 
 In wildcard mode (`DFIR_HOSTS=*`) `HOST` is required; use the machine ID shown on the **Machines** page. With an explicit allowlist, it defaults to the first ID in `DFIR_HOSTS`.
@@ -88,6 +152,8 @@ sha256sum evidence.bin                # must match "sha256" in the job JSON
 ```
 
 Console: `http://localhost:8080/` (log in with `DFIR_OPERATOR_TOKEN` from `.env`). Port conflicts: set `DFIR_CONSOLE_PORT` / `WEB_PORT` in `.env` and re-run `make lab-up`. Teardown: `make lab-down`; full reset (also deletes `data/` and `.env`): `make lab-clean`. The full lab guide, including verified Windows-agent steps and troubleshooting, is in `deploy/docker/README.md` (§4).
+
+The console has a dedicated **Memory** view (`#/memory`) for `memory.v1`: it lists captures with status, image size and image hash, queues a new capture behind an explicit consent step, and renders the manifest (tool, exit code, physical RAM, acquisition duration and notes) plus the **Memory analysis** card (Volatility status, per-plugin tables and re-run) in the collection sheet. Images above 512 MiB are not downloaded through the browser; the artifact card shows a copyable `curl` command instead.
 
 ## Running the Windows agent
 
@@ -109,6 +175,7 @@ Flags and behavior:
 - `-web-config` defaults to `applicationHost.config` under `%SystemRoot%\System32\inetsrv\config`. It is used for role detection: without IIS the agent reports `skipped` by design. `-web-logs` defaults to the IIS log root (`%SystemDrive%\inetpub\logs\LogFiles\W3SVC*\*.log`).
 - `-web-logs` accepts comma-separated paths or glob patterns; globs are expanded and only the **four newest** matches are uploaded (kind `iis_log`), so the server limit of 260 artifacts/job (256 uploads + 4 logs) is never exceeded. The current server accepts the `iis_log` kind; a server binary from before IIS support rejects it with HTTP 400, which the agent treats as a transport failure and retries forever — run the agent with `-web-logs ''` (files only) until the server is rebuilt.
 - `-eventlog-channels` defaults to `System,Application`; add `Security` for a domain controller / incident value, which requires running as Administrator.
+- `-memory-tool`, `-memory-tool-sha256` and `-memory-out` enable `memory.v1` (see the memory capture section above). `-memory-tool-name` selects `winpmem`, `winpmem-mini` or `winpmem-physical`; `-memory-tool-version` is recorded only in the manifest, `-memory-timeout`/`-memory-max-bytes` bound the run, and `-memory-keep` leaves the local image in place after a successful upload.
 - `-host-id` is optional; the agent uses the machine hostname (lowercased) when it is omitted and logs the resolved value. Pass it to override collisions or keep a stable ID after a rename.
 - `-state` sets the local role cache path; `-heartbeat-interval` defaults to `1m` and `-role-interval` to `1h`. Run the agent as `LocalSystem` for full registry coverage during role detection.
 - `-apache-config` / `-apache-logs` are still accepted as aliases of `-web-config` / `-web-logs`.
@@ -170,12 +237,12 @@ make web-check       # typescript + ESLint + Stylelint + Vitest
 - The bundle is written to `internal/webui/dist`; `make lab-up` also builds it inside Docker.
 - Layout, conventions and recipes: [AGENTS.md](AGENTS.md).
 
-Lab limits: at most 10 MiB per file, 256 files per job from the upload directory and 4 newest logs per job (260 artifacts total; older logs are dropped and noted in `reason`, which does not count as an error; exceeding the file limits is recorded as `partial`). Logs are captured whole when ≤ 10 MiB; **there is no `since`-based log tailoring yet**. Data on a running system may change before or after collection; the manifest describes the snapshot received and does not prove the state of the source at any earlier moment.
+Lab limits: at most 10 MiB per file, 256 files per job from the upload directory and 4 newest logs per job (260 artifacts total; older logs are dropped and noted in `reason`, which does not count as an error; exceeding the file limits is recorded as `partial`). The one exception is `memory.v1`: a `memory_image` may be as large as the server's `-max-memory-image` (16 GiB by default), streamed to and from disk without buffering. Logs are captured whole when ≤ 10 MiB; **there is no `since`-based log tailoring yet**. Data on a running system may change before or after collection; the manifest describes the snapshot received and does not prove the state of the source at any earlier moment.
 
 ## Security and unimplemented features
 
 - The lab currently runs **HTTP without TLS** (development phase): Bearer tokens and evidence travel in cleartext. Use it only on a trusted lab network and never expose the port to the Internet. Both binaries still support TLS (`-tls-cert`/`-tls-key` on the server, `-tls-ca` on the agent) to re-enable it later without code changes. Never put tokens in source code, committed configuration files or URLs. The VirusTotal key lives only in `data/ti_config.json` (0600, gitignored via `data/`); VirusTotal queries leave the **server** over HTTPS and carry only the filtered public indicators, never tokens or evidence.
 - The server has one operator token and one agent token shared by every configured host: **no RBAC/multiple users, per-host agent identity enrollment or revocation, at-rest encryption, client certificates, per-investigator authentication, or tamper-evident signatures for manifests/audit logs**. In wildcard mode any token holder can register any valid hostname; use an isolated lab machine. This is not yet a legally complete chain-of-custody process. VirusTotal verdicts describe what third-party engines reported at query time and are **not** proof of maliciousness; the report records query time and cache provenance for exactly this reason.
-- The agent runs elevated to read the chosen logs. The server sends no shell commands and cannot specify collection paths through a job. Symlinks (and junctions/reparse points on Windows) are skipped; upload locations are never auto-discovered; Nginx is not supported.
-- On Windows the agent currently implements `netstat.v1`, `eventlog.v1`, `webshell.v1` (IIS) and `hostrole.v1`; scenarios such as `services.v1`/`autoruns.v1` and process-injection detection are not implemented. `hostrole.v1` detects Microsoft host roles only and reports configured roles, not live traffic.
+- The agent runs elevated to read the chosen logs. The server sends no shell commands and cannot specify collection paths through a job. The scenarios that run a subprocess are `eventlog.v1` (`wevtutil`, an OS component), `memory.v1` (an operator-provided acquisition binary pinned by SHA-256), and the server-side Volatility analysis (pinned wrapper and stable Volatility 3 with fixed argv and a filtered environment); all use fixed arguments and no shell. Symlinks (and junctions/reparse points on Windows) are skipped; upload locations are never auto-discovered; Nginx is not supported.
+- On Windows the agent currently implements `netstat.v1`, `eventlog.v1`, `webshell.v1` (IIS), `hostrole.v1` and the opt-in `memory.v1`; scenarios such as `services.v1`/`autoruns.v1` and process-injection detection are not implemented. `hostrole.v1` detects Microsoft host roles only and reports configured roles, not live traffic. `memory.v1` captures full physical memory but does not include the pagefile or hibernation file; the server adds a Volatility 3 analysis of the image.
 - `deploy/` contains templates only: systemd units for the Linux server and `deploy/windows.md` for the Windows agent service. For a real deployment you must install the binary, create a dedicated user, place token files with `0600` permissions (e.g. `/etc/dfir-server.env`), adjust endpoints/paths and re-enable TLS. Nothing is auto-installed on end-user machines.

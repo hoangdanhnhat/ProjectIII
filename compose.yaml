@@ -38,6 +38,14 @@ services:
       - /data
       - -hosts
       - "${DFIR_HOSTS:-*}"
+      - -volatility
+      - /opt/volatility/bin/vol
+      - -vol-wrapper
+      - /usr/local/bin/vol-wrapper
+      - -vol-symbols
+      - /data/volatility/symbols
+      - -vol-cache
+      - /data/volatility/cache
     ports:
       - "${DFIR_CONSOLE_PORT:-8080}:8080"
     volumes:

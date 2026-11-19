@@ -24,12 +24,13 @@ import (
 // Agent polls the server for jobs, runs the matching collector, and reports
 // the result.
 type Agent struct {
-	base     string
-	host     string
-	token    string
-	client   *http.Client
-	registry *collector.Registry
-	interval time.Duration
+	base         string
+	host         string
+	token        string
+	client       *http.Client
+	uploadClient *http.Client
+	registry     *collector.Registry
+	interval     time.Duration
 
 	statePath         string
 	heartbeatInterval time.Duration
@@ -37,6 +38,8 @@ type Agent struct {
 	roleSource        hostrole.Source
 	version           string
 	now               func() time.Time
+
+	memoryImageLimit int64
 
 	state         *State
 	stateLoaded   bool
@@ -50,12 +53,14 @@ type Options struct {
 	HostID            string       // must match the server's authorized host ID
 	Token             string       // DFIR_AGENT_TOKEN
 	Client            *http.Client // optional; defaults to a 60s-timeout client
+	UploadClient      *http.Client // optional; large uploads need no global timeout
 	Registry          *collector.Registry
 	Interval          time.Duration // polling interval, default 5s
 	StatePath         string        // local role cache; platform default when empty
 	HeartbeatInterval time.Duration // inventory heartbeat, default 1m
 	RoleInterval      time.Duration // automatic role detection, default 1h
 	RoleSource        hostrole.Source
+	MemoryImageLimit  int64 // memory_image cap; default DefaultMemoryImageLimit
 	Version           string
 	Now               func() time.Time // injectable clock for tests
 }
@@ -90,17 +95,29 @@ func New(o Options) *Agent {
 	if now == nil {
 		now = time.Now
 	}
+	// Uploads stream from disk and can legitimately outlast the polling
+	// client's 60s budget; the sink applies a per-request deadline instead.
+	uploadClient := o.UploadClient
+	if uploadClient == nil {
+		uploadClient = &http.Client{Transport: client.Transport}
+	}
+	memoryImageLimit := o.MemoryImageLimit
+	if memoryImageLimit <= 0 {
+		memoryImageLimit = DefaultMemoryImageLimit
+	}
 	return &Agent{
 		base:              strings.TrimRight(o.ServerURL, "/"),
 		host:              o.HostID,
 		token:             o.Token,
 		client:            client,
+		uploadClient:      uploadClient,
 		registry:          o.Registry,
 		interval:          interval,
 		statePath:         statePath,
 		heartbeatInterval: heartbeat,
 		roleInterval:      roleInterval,
 		roleSource:        roleSource,
+		memoryImageLimit:  memoryImageLimit,
 		version:           o.Version,
 		now:               now,
 	}

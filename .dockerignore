@@ -5,3 +5,8 @@ bin/
 deploy/docker/certs/
 *.test
 web/node_modules
+
+# Third-party source trees are not part of the build context; the wrapper is
+# cloned at a pinned commit in the Dockerfile and Volatility comes from PyPI.
+utils/volatility3
+utils/VolGolangWrapper

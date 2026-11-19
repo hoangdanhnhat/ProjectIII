@@ -16,6 +16,7 @@ var Scenarios = []Scenario{
 	{ID: ScenarioNetstat, Kinds: []Kind{KindNetstatSnapshot, KindTIReport}},
 	{ID: ScenarioEventlog, Kinds: []Kind{KindEventLog}},
 	{ID: ScenarioHostRole, Kinds: []Kind{KindHostRole}},
+	{ID: ScenarioMemory, Kinds: []Kind{KindMemoryImage, KindMemoryManifest, KindVolatilityReport, KindVolatilityPlugin}},
 }
 
 // ScenarioByID looks up a scenario in the catalog.

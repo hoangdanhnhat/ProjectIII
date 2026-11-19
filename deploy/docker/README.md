@@ -32,6 +32,7 @@ Các kịch bản (scenario) binary hiện hỗ trợ:
 | `webshell.v1` | container `web` Linux — cần `make lab-up-web` (và Windows có IIS) | file trong thư mục upload + các log web mới nhất |
 | `netstat.v1` | Windows | bảng kết nối TCP/UDP kèm tiến trình sở hữu (JSON) |
 | `eventlog.v1` | Windows | các kênh event log dạng JSON có phiên bản schema |
+| `memory.v1` | Windows | ảnh bộ nhớ vật lý đầy đủ (tool WinPmem do người vận hành cung cấp, ghim SHA-256) + manifest kèm hash/tool/exit code; server tự chạy Volatility 3 và thêm artifact `volatility_plugin`/`volatility_report`. Tùy chọn, cần quyền Administrator |
 
 ## Yêu cầu
 
@@ -70,6 +71,7 @@ Với agent Windows (mặc định):
 ```bash
 make lab-job SCENARIO=netstat.v1     # bảng kết nối TCP/UDP của máy Windows
 make lab-job SCENARIO=eventlog.v1    # event log các kênh System, Application
+make lab-job SCENARIO=memory.v1      # ảnh bộ nhớ + manifest + phân tích Volatility; cần cờ -memory-* trên agent
 ```
 
 Mong đợi: `status: completed` với artifact `netstat_snapshot` / `event_log`.
@@ -267,6 +269,7 @@ quản lý nhiều máy.
 Chỉ dành cho lab: HTTP thường, không mã hóa đường truyền (TLS để sau), container
 chạy root, token nằm trong `.env`. Server cấp quyền một danh sách host ID với
 token dùng chung, không có danh tính riêng cho từng agent (mục 5). Mỗi artifact
-tối đa 10 MiB, tối đa 260 artifact/job. Trên
-Windows hiện có `netstat.v1` và `eventlog.v1` (và `webshell.v1` với IIS);
+tối đa 10 MiB (riêng `memory_image` theo `-max-memory-image`, mặc định 16 GiB), tối đa
+260 artifact/job. Trên Windows hiện có `netstat.v1`, `eventlog.v1`, `hostrole.v1`, `webshell.v1`
+(với IIS) và `memory.v1` (tùy chọn, cần tool + digest);
 `services.v1`/`autoruns.v1` và hỗ trợ thu thập trên Linux đang được lên kế hoạch.

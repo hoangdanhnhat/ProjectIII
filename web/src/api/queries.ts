@@ -22,6 +22,7 @@ export const qk = {
   host: (id: string) => ["hosts", id] as const,
   tiSettings: () => ["ti-settings"] as const,
   artifact: (jobId: string, artifactId: string) => ["artifact", jobId, artifactId] as const,
+  artifactJSONL: (jobId: string, artifactId: string) => ["artifact-jsonl", jobId, artifactId] as const,
 };
 
 export function useJobs(token: string) {
@@ -56,6 +57,33 @@ export function useArtifactJSON<T>(token: string, jobId: string, artifactId: str
       } catch {
         return null;
       }
+    },
+    enabled: token !== "" && artifactId !== null,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+  });
+}
+
+/** useArtifactJSONL reads one JSON-Lines artifact and stops at a sane cap. */
+export function useArtifactJSONL<T>(token: string, jobId: string, artifactId: string | null) {
+  return useQuery({
+    queryKey: qk.artifactJSONL(jobId, artifactId ?? "none"),
+    queryFn: async ({ signal }): Promise<T[]> => {
+      if (!artifactId) return [];
+      const blob = await apiFetchBlob(`/v1/jobs/${jobId}/artifacts/${artifactId}`, { token, signal });
+      const text = await blob.text();
+      const rows: T[] = [];
+      for (const line of text.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          rows.push(JSON.parse(line) as T);
+        } catch {
+          // Skip a malformed line rather than failing the whole table.
+        }
+        if (rows.length >= 5000) break;
+      }
+      return rows;
     },
     enabled: token !== "" && artifactId !== null,
     staleTime: Infinity,
@@ -143,6 +171,19 @@ export function useRerunTI(token: string) {
   return useMutation({
     mutationFn: (jobId: string) =>
       apiFetch<Job>(`/v1/jobs/${encodeURIComponent(jobId)}/ti`, { token, method: "POST" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.jobs() }),
+  });
+}
+
+/** useRunVolatility re-runs memory analysis for a completed memory.v1 job. */
+export function useRunVolatility(token: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (jobId: string) =>
+      apiFetch<Job>(`/v1/jobs/${encodeURIComponent(jobId)}/volatility`, {
+        token,
+        method: "POST",
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.jobs() }),
   });
 }

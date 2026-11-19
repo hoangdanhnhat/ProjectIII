@@ -6,6 +6,8 @@ import { Dialog } from "../ui/Dialog";
 import { ArtifactList } from "./ArtifactList";
 import { HostRoleCard } from "./HostRoleCard";
 import { JobFacts } from "./JobFacts";
+import { MemoryAnalysisCard } from "./MemoryAnalysisCard";
+import { MemoryCard } from "./MemoryCard";
 import { TISection } from "../ti/TISection";
 
 interface JobDetailSheetProps {
@@ -55,6 +57,10 @@ export function JobDetailSheet({ job, token, onClose }: JobDetailSheetProps) {
           {job.scenario === "netstat.v1" ? <TISection job={job} token={token} /> : null}
 
           {job.scenario === "hostrole.v1" ? <HostRoleCard job={job} token={token} /> : null}
+
+          {job.scenario === "memory.v1" ? <MemoryCard job={job} token={token} /> : null}
+
+          {job.scenario === "memory.v1" ? <MemoryAnalysisCard job={job} token={token} /> : null}
 
           <ArtifactList job={job} token={token} />
         </div>

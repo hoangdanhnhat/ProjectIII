@@ -85,6 +85,20 @@ $env:DFIR_AGENT_TOKEN = '<agent-token>'
   4 logs) is never exceeded. IIS logs are sent with kind `iis_log`.
 - `-apache-config` and `-apache-logs` are retained as aliases for `-web-config` and
   `-web-logs`.
+- `memory.v1` is opt-in and needs three flags: `-memory-tool` (absolute path to an
+  operator-provided WinPmem binary), `-memory-tool-sha256` (its pinned SHA-256) and
+  `-memory-out` (an existing staging directory). The agent never downloads the tool,
+  verifies the digest at startup and before every capture, refuses to run without an
+  elevated token, and requires free space of at least physical RAM + 256 MiB. WinPmem 4.x
+  returns 1 after a completed capture and -1 on failure; the `winpmem` profile accepts
+  that convention and records the code in the manifest. Add
+  `-memory-tool-name winpmem-physical` (or `winpmem`/`winpmem-mini`) if the executable name is
+  ambiguous, raise
+  `-memory-max-bytes` and the server's `-max-memory-image` together for hosts above 16 GiB
+  of RAM, and use `-memory-keep` only when you deliberately want a second copy of the image
+  on the endpoint. A failed run still uploads a `memory_manifest` with the tool exit code
+  and stderr tail. Once a valid image is uploaded, the server runs Volatility 3 analysis
+  automatically (Docker image) and stores JSONL plugin outputs plus a report.
 - The agent reads the config/logs with the account it runs as. To read
   `applicationHost.config` and all site logs, run it as `LocalSystem` (or grant explicit
   read ACLs).

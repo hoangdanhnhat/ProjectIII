@@ -135,6 +135,18 @@ C:\dfir\dfir-agent.exe `
   - `-uploads 'C:\inetpub\wwwroot\uploads'` — needed for `webshell.v1`
     (IIS has no standard upload directory; without the flag that scenario
     reports `needs_configuration`, the others are unaffected).
+  - `-memory-tool 'C:\dfir\winpmem64.exe'`
+    `-memory-tool-sha256 '<sha256>'` `-memory-out 'C:\dfir\memory'` —
+    enables `memory.v1`. Place WinPmem on the machine yourself; the agent
+    never downloads it and refuses to run a binary whose digest does not
+    match. Use `-memory-tool-name winpmem-physical` for the WinPmem 4.0.1
+    build: its default PTE mode produced corrupt images on the lab VM,
+    while `-1` (physical mode) produced an image Volatility can parse. Also
+    raise `-memory-max-bytes` plus the server's `-max-memory-image` on hosts
+    with more than 16 GiB of RAM. Captures need an elevated agent and free
+    disk space equal to physical RAM plus 256 MiB. The Docker server
+    analyzes each completed image with Volatility 3 automatically (first
+    run downloads symbols; see the Memory analysis section of the README).
 
 Connectivity check from Windows if nothing happens:
 `Test-NetConnection <linux-ip> -Port 8080`.
@@ -194,6 +206,7 @@ Try the other scenarios the same way:
 make lab-job SCENARIO=eventlog.v1 HOST=<host-id>    # one event_log artifact per channel
 make lab-job SCENARIO=webshell.v1 HOST=<host-id>    # requires -uploads on the agent (IIS)
 make lab-job SCENARIO=hostrole.v1 HOST=<host-id>    # one host_role artifact with the detected roles
+make lab-job SCENARIO=memory.v1 HOST=<host-id>      # image + manifest, then Volatility analysis artifacts
 ```
 
 The `hostrole.v1` job opens the collection detail and shows a **Host role**
@@ -264,6 +277,13 @@ Old jobs and evidence in `./data/` are untouched by an update.
 | `webshell.v1` returns `skipped` | No IIS on that machine — by design (role detection via `applicationHost.config`). |
 | `hostrole.v1` has `probe_errors` | A registry key or file was unreadable; run the agent as LocalSystem/Administrator for full coverage. The profile still lists roles supported by the remaining evidence. |
 | `eventlog.v1` returns `partial` with access denied | The `Security` channel needs an Administrator agent. |
+| `memory.v1` returns `needs_configuration` | `-memory-tool`, `-memory-tool-sha256` and `-memory-out` are not all set (or the tool digest no longer matches its file). |
+| `memory.v1` fails with "administrator privileges are required" | Start the agent as LocalSystem/Administrator; a memory image cannot be acquired from a standard user token. |
+| `memory.v1` fails preflight on free space or `-memory-max-bytes` | Free disk in `-memory-out` must be at least physical RAM + 256 MiB, and both `-memory-max-bytes` and the server's `-max-memory-image` must be at least physical RAM. |
+| `memory.v1` fails in the tool | Open the `memory_manifest` artifact: it records the tool's exit code and the tail of its stdout/stderr. |
+| Memory analysis fails with no completed plugin | The image may have no Windows kernel layer. Capture it with `-memory-tool-name winpmem-physical` (`-1`); the PTE default of this WinPmem build produced corrupt images. |
+| Memory analysis is stuck at `running` after a server restart | The server marks interrupted analyses on startup; press **Re-run analysis** in the memory job sheet. |
+| Memory analysis fails downloading symbols | The first run needs network access to the Volatility symbol server. Pre-seed `data/volatility/symbols` for offline labs, then re-run. |
 | Job `ti_status` is `skipped` | No VirusTotal key configured — add it in the console and press **Re-run check**. |
 | Job `ti_status` is `partial` | Some VT queries failed (invalid key or HTTP 429) — the reason on the job names the error; wait a minute and re-run. |
 | TI reason contains `x509: certificate signed by unknown authority` | The server image was built before the CA fix (the plain Ubuntu image ships no trust store). Rebuild with `make lab-up`, then press **Re-run check** — no re-collection needed. |

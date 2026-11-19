@@ -16,7 +16,11 @@ export type Kind =
   | "netstat_snapshot"
   | "event_log"
   | "ti_report"
-  | "host_role";
+  | "host_role"
+  | "memory_image"
+  | "memory_manifest"
+  | "volatility_report"
+  | "volatility_plugin";
 
 export type JobStatus =
   | "queued"
@@ -70,6 +74,9 @@ export interface Job {
   reason?: string;
   ti_status?: TIStatus | "";
   ti_reason?: string;
+  volatility_status?: VolatilityStatus | "";
+  volatility_reason?: string;
+  volatility_image?: string;
   artifacts: Artifact[];
 }
 
@@ -194,6 +201,39 @@ export interface HostRoleProfile {
   probe_errors?: Array<{ source: string; detail: string }>;
 }
 
+/** Mirrors internal/collector/memory.Manifest (schema version 1). */
+export interface MemoryManifest {
+  schema_version: number;
+  scenario: string;
+  host_id: string;
+  job_id: string;
+  started_at: string;
+  finished_at: string;
+  duration_ms: number;
+  tool: {
+    name: string;
+    version?: string;
+    path: string;
+    sha256: string;
+    args: string[];
+  };
+  memory_total_bytes: number;
+  disk_free_bytes: number;
+  image?: {
+    path: string;
+    size: number;
+    sha256: string;
+  };
+  result: {
+    status: "completed" | "failed";
+    error?: string;
+    exit_code: number;
+    stdout_tail?: string;
+    stderr_tail?: string;
+  };
+  notes: string[];
+}
+
 export type HostStatus = "online" | "stale" | "offline" | "never_seen";
 
 export interface HostOS {
@@ -246,6 +286,51 @@ export interface ListEntry {
   type: "ip" | "cidr" | "domain" | "domain_wildcard";
   note?: string;
   created_at: string;
+}
+
+export type VolatilityStatus =
+  | "running"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "skipped"
+  | "interrupted";
+
+export interface VolatilityPluginResult {
+  name: string;
+  status: "completed" | "failed" | "oversized";
+  rows: number;
+  duration_ms: number;
+  size: number;
+  artifact_id?: string;
+  error?: string;
+}
+
+export interface VolatilityReport {
+  schema_version: number;
+  job_id: string;
+  host_id: string;
+  generated_at: string;
+  engine: {
+    name: string;
+    version: string;
+    wrapper_commit: string;
+  };
+  image: {
+    artifact_id: string;
+    sha256: string;
+    size: number;
+  };
+  plugins: VolatilityPluginResult[];
+  summary: {
+    requested: number;
+    completed: number;
+    failed: number;
+    oversized: number;
+    rows: number;
+  };
+  notes: string[];
+  log_tail?: string;
 }
 
 export interface TISettings {

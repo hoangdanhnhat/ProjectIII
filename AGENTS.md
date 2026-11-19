@@ -13,17 +13,21 @@ change.
   inventory heartbeat and a local role cache (`internal/agent/state.go`). The
   host ID defaults to the machine hostname; `-host-id` is an override.
 - `internal/collector/*` — one package per scenario (`webshell`, `netstat`,
-  `eventlog`, `hostrole`); pure rendering/correlation logic is platform-neutral
-  and unit-tested on Linux, OS APIs live in `*_windows.go`.
+  `eventlog`, `hostrole`, `memory`); pure rendering/correlation logic is
+  platform-neutral and unit-tested on Linux, OS APIs live in `*_windows.go`.
 - `internal/hostrole` — Windows server-role classifier shared by collectors:
   facts probe in `windows.go`, pure scoring in `classify.go`, versioned
   `host_role` profile in `render.go`.
 - `internal/ti` — threat-intel engine: settings, white/black lists,
   VirusTotal client, enrichment.
+- `internal/volatility` — Volatility 3 analysis runner: pinned wrapper,
+  curated plugin list, JSONL output parsing, versioned report.
 - `internal/webui` — embeds the React console build (`dist/`).
 - `web/` — React console (TypeScript, Vite, TanStack Query, Vitest).
 - `deploy/` — Docker lab, systemd/Windows service templates.
 - `SETUP.md` — operator setup guide. `README.md` — feature reference.
+- `WINDOWS-VM-SSH.md` — how to run commands/code on the Windows Server 2016
+  lab VM (`win-srv-2016`) over SSH, including transfer and exit-code rules.
 
 ## Commands
 
@@ -58,11 +62,14 @@ src/
     ui/         primitives: Button, Chip, Tag, Field, Dialog, Toasts, ...
     layout/     TopBar, ConnectView, Dashboard
     jobs/       stats, filters, list, new-collection dialog
-    detail/     collection sheet, facts, artifacts, downloads
+    detail/     collection sheet, facts, artifacts, downloads, memory manifest,
+                Volatility analysis card and plugin tables
     inventory/  Machines page, host list/filters, role editor, detail sheet
+    memory/     Memory page, capture dialog, capture rows
     ti/         triage section, findings/connections/DNS tables, verdict chips
     settings/   Threat Intel dialog: VirusTotal card + white/blacklist manager
-  lib/        format (time/bytes), download, jobFilters, hostRoles, hostFilters
+  lib/        format (time/bytes), download, jobFilters, hostRoles, hostFilters,
+              memory (scenario helpers)
   styles/     tokens.css (the only literal colors), base.css, components.css
   dev/        Gallery.tsx — dev-only primitive gallery (?gallery)
   test/       setup, fixtures, host fixtures, MSW handlers, token/contrast tests
@@ -145,14 +152,20 @@ must bump `role_revision` and never rewrite historical artifacts.
 ## Evidence and security invariants (do not weaken)
 
 - Raw evidence artifacts are immutable: enrichment writes a **new**
-  `ti_report` artifact and never rewrites the snapshot.
+  `ti_report` artifact and never rewrites the snapshot. Memory analysis writes
+  new `volatility_report`/`volatility_plugin` artifacts and never touches the
+  `memory_image`.
 - Downloads verify SHA-256 before serving; keep it that way.
 - The operator token stays in `sessionStorage`; the VirusTotal key never
   leaves the server (`data/ti_config.json`, 0600).
 - CSP, `nosniff`, `frame-ancestors 'none'` headers are non-negotiable.
-- Collectors never run arbitrary commands; only vetted system binaries with
-  fixed arguments (`wevtutil`, `Get-DnsClientCache`) and no symlink
-  following.
+- Collectors never run shell commands. Subprocesses are limited to vetted
+  binaries with fixed arguments: OS components (`wevtutil`), the
+  operator-supplied memory acquisition binary, which is resolved from an
+  explicit absolute path, pinned by SHA-256 and re-verified before every run,
+  and the server-side Volatility analysis (pinned wrapper + stable
+  Volatility 3, fixed argv, filtered environment, process-group timeout).
+  Never download or write an executable at runtime.
 - Host inventory records are operator-visible metadata, not evidence: they
   contain role IDs, OS/build and timestamps, never file contents or secrets.
   Manual role overrides are stored on the server and cached locally by the

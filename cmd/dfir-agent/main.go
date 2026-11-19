@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"example.com/dfir-collector/internal/collector"
 	"example.com/dfir-collector/internal/collector/eventlog"
 	hostrolecollector "example.com/dfir-collector/internal/collector/hostrole"
+	memorycollector "example.com/dfir-collector/internal/collector/memory"
 	"example.com/dfir-collector/internal/collector/netstat"
 	"example.com/dfir-collector/internal/collector/webshell"
 )
@@ -40,6 +42,14 @@ func main() {
 	state := flag.String("state", agent.DefaultStatePath(), "local host-role state file")
 	heartbeat := flag.Duration("heartbeat-interval", time.Minute, "inventory heartbeat interval")
 	roleInterval := flag.Duration("role-interval", time.Hour, "automatic role detection interval")
+	memTool := flag.String("memory-tool", "", "absolute path to an operator-supplied memory acquisition binary (empty disables memory.v1)")
+	memSHA := flag.String("memory-tool-sha256", "", "pinned SHA-256 of -memory-tool (required with -memory-tool)")
+	memName := flag.String("memory-tool-name", "", "capture tool profile: winpmem or winpmem-mini (default: derived from the executable name)")
+	memVersion := flag.String("memory-tool-version", "", "capture tool version recorded in the manifest")
+	memOut := flag.String("memory-out", "", "staging directory for memory images (required with -memory-tool)")
+	memMax := flag.Int64("memory-max-bytes", memorycollector.DefaultMaxBytes, "maximum memory image size in bytes (must match the server's -max-memory-image)")
+	memTimeout := flag.Duration("memory-timeout", memorycollector.DefaultTimeout, "maximum duration of one memory acquisition")
+	memKeep := flag.Bool("memory-keep", false, "keep the local memory image after a successful upload")
 	flag.Parse()
 	// Visit lets "-apache-logs ''" keep its meaning (an explicitly empty list).
 	set := make(map[string]bool)
@@ -49,6 +59,23 @@ func main() {
 	}
 	if set["apache-logs"] {
 		*webLogs = *apacheLogs
+	}
+	if *memTool != "" {
+		if *memSHA == "" {
+			log.Fatal("-memory-tool-sha256 is required with -memory-tool")
+		}
+		if *memOut == "" {
+			log.Fatal("-memory-out is required with -memory-tool")
+		}
+		if !filepath.IsAbs(*memTool) {
+			log.Fatal("-memory-tool must be an absolute path")
+		}
+		if err := memorycollector.VerifyTool(*memTool, *memSHA); err != nil {
+			log.Fatal(err)
+		}
+	}
+	if *memMax < 10<<20 {
+		log.Fatal("-memory-max-bytes must be at least 10 MiB")
 	}
 	token := os.Getenv("DFIR_AGENT_TOKEN")
 	if token == "" {
@@ -84,6 +111,16 @@ func main() {
 		netstat.New(),
 		eventlog.New(eventlog.Options{Channels: eventlog.SplitChannels(*eventlogChannels)}),
 		hostrolecollector.New(hostrolecollector.Options{}),
+		memorycollector.New(memorycollector.Options{
+			ToolPath:    *memTool,
+			ToolSHA256:  *memSHA,
+			ToolName:    *memName,
+			ToolVersion: *memVersion,
+			OutDir:      *memOut,
+			MaxBytes:    *memMax,
+			Timeout:     *memTimeout,
+			Keep:        *memKeep,
+		}),
 	)
 	log.Printf("agent host ID: %s", hostID)
 	a := agent.New(agent.Options{
@@ -91,11 +128,13 @@ func main() {
 		HostID:            hostID,
 		Token:             token,
 		Client:            &http.Client{Timeout: 60 * time.Second, Transport: transport},
+		UploadClient:      &http.Client{Transport: transport},
 		Registry:          registry,
 		Interval:          *interval,
 		StatePath:         *state,
 		HeartbeatInterval: *heartbeat,
 		RoleInterval:      *roleInterval,
+		MemoryImageLimit:  *memMax,
 		Version:           agent.Version(),
 	})
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -2,7 +2,7 @@ import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
 import type { Theme } from "../../hooks/useTheme";
 
-export type AppView = "collections" | "machines";
+export type AppView = "collections" | "memory" | "machines";
 
 interface TopBarProps {
   theme: Theme;
@@ -47,6 +47,13 @@ export function TopBar({
               aria-current={view === "collections" ? "page" : undefined}
             >
               Collections
+            </a>
+            <a
+              className={view === "memory" ? "nav-link is-active" : "nav-link"}
+              href="#/memory"
+              aria-current={view === "memory" ? "page" : undefined}
+            >
+              Memory
             </a>
             <a
               className={view === "machines" ? "nav-link is-active" : "nav-link"}

@@ -3,6 +3,7 @@ import { TopBar, type AppView } from "./components/layout/TopBar";
 import { ConnectView } from "./components/layout/ConnectView";
 import { Dashboard } from "./components/layout/Dashboard";
 import { InventoryPage } from "./components/inventory/InventoryPage";
+import { MemoryPage } from "./components/memory/MemoryPage";
 import { TISettingsDialog } from "./components/settings/TISettingsDialog";
 import { Skeleton } from "./components/ui/Skeleton";
 import { useSession } from "./hooks/useSession";
@@ -15,7 +16,9 @@ function wantsGallery(): boolean {
 }
 
 function currentView(): AppView {
-  return window.location.hash.startsWith("#/machines") ? "machines" : "collections";
+  if (window.location.hash.startsWith("#/machines")) return "machines";
+  if (window.location.hash.startsWith("#/memory")) return "memory";
+  return "collections";
 }
 
 export default function App() {
@@ -57,6 +60,8 @@ export default function App() {
         {meta ? (
           view === "machines" ? (
             <InventoryPage token={session.token} meta={meta} />
+          ) : view === "memory" ? (
+            <MemoryPage token={session.token} meta={meta} />
           ) : (
             <Dashboard token={session.token} meta={meta} />
           )

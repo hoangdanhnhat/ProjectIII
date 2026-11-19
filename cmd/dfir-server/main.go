@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,10 +23,16 @@ import (
 	"example.com/dfir-collector/internal/hostrole"
 	"example.com/dfir-collector/internal/protocol"
 	"example.com/dfir-collector/internal/ti"
+	"example.com/dfir-collector/internal/volatility"
 	"example.com/dfir-collector/internal/webui"
 )
 
 const maxArtifact = 10 << 20
+
+// maxMemoryImageDefault bounds one memory_image artifact. Memory captures are
+// the only artifacts allowed above maxArtifact; the operator must keep this
+// flag and the agent's -memory-max-bytes aligned.
+const maxMemoryImageDefault = 16 << 30 // 16 GiB
 
 type server struct {
 	mu                             sync.Mutex
@@ -35,12 +42,18 @@ type server struct {
 	hostIDs                        map[string]bool
 	hosts                          map[string]*protocol.Host
 	jobs                           map[string]*protocol.Job
+	// maxMemoryImage is set once before the server starts serving.
+	maxMemoryImage int64
 	// threat-intel state: operator-managed settings and white/blacklists,
 	// shared VirusTotal client with its persistent verdict cache.
 	settings  *ti.SettingsStore
 	whitelist *ti.ListStore
 	blacklist *ti.ListStore
 	vt        *ti.VTClient
+	// memory analysis: nil when the server was started without Volatility.
+	volRunner *volatility.Runner
+	volAuto   bool
+	volRunMu  sync.Mutex
 }
 
 func main() {
@@ -50,7 +63,20 @@ func main() {
 	hostsFlag := flag.String("hosts", "", "comma-separated authorized host IDs, or '*' to accept any machine hostname")
 	cert := flag.String("tls-cert", "", "optional TLS certificate (enables HTTPS)")
 	key := flag.String("tls-key", "", "optional TLS private key")
+	maxMemory := flag.Int64("max-memory-image", maxMemoryImageDefault, "maximum size in bytes of one memory_image artifact")
+	volPath := flag.String("volatility", "", "path to the Volatility 3 vol executable (enables memory analysis with -vol-wrapper)")
+	volWrapper := flag.String("vol-wrapper", "", "path to the VolGolangWrapper binary")
+	volSymbols := flag.String("vol-symbols", "", "symbol cache directory (default <data>/volatility/symbols)")
+	volCache := flag.String("vol-cache", "", "Volatility identifier cache directory (default <data>/volatility/cache)")
+	volPlugins := flag.String("vol-plugins", "", "plugin list file, one per line (default built-in Windows set)")
+	volAuto := flag.Bool("vol-auto", true, "automatically analyze completed memory.v1 jobs")
+	volTimeout := flag.Duration("vol-timeout", 15*time.Minute, "maximum duration of one memory analysis")
+	volMaxOutput := flag.Int64("vol-max-output", 64<<20, "per-plugin output size limit in bytes")
+	volCPUs := flag.String("vol-cpus", "0-3", "taskset CPU list for analysis; empty disables CPU pinning")
 	flag.Parse()
+	if *maxMemory < maxArtifact || *maxMemory > 1<<40 {
+		log.Fatal("-max-memory-image must be between 10 MiB and 1 TiB")
+	}
 	op := os.Getenv("DFIR_OPERATOR_TOKEN")
 	ag := os.Getenv("DFIR_AGENT_TOKEN")
 	if op == "" || ag == "" || op == ag {
@@ -73,6 +99,51 @@ func main() {
 	s, err := newServerWithPolicy(*dir, hosts, allowAny, op, ag)
 	if err != nil {
 		log.Fatal(err)
+	}
+	s.maxMemoryImage = *maxMemory
+	if (*volPath == "") != (*volWrapper == "") {
+		log.Fatal("set both -volatility and -vol-wrapper, or neither")
+	}
+	if *volPath != "" {
+		plugins, err := volatility.LoadPlugins(*volPlugins)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if *volTimeout <= 0 || *volMaxOutput <= 0 {
+			log.Fatal("-vol-timeout and -vol-max-output must be positive")
+		}
+		for _, path := range []string{*volPath, *volWrapper} {
+			if info, err := os.Stat(path); err != nil || info.IsDir() {
+				log.Fatalf("memory analysis tool %s is not a readable file", path)
+			}
+		}
+		symbols := *volSymbols
+		if symbols == "" {
+			symbols = filepath.Join(*dir, "volatility", "symbols")
+		}
+		cache := *volCache
+		if cache == "" {
+			cache = filepath.Join(*dir, "volatility", "cache")
+		}
+		if err := os.MkdirAll(symbols, 0700); err != nil {
+			log.Fatal(err)
+		}
+		if err := os.MkdirAll(cache, 0700); err != nil {
+			log.Fatal(err)
+		}
+		s.volRunner = volatility.New(volatility.Config{
+			VolPath:     *volPath,
+			WrapperPath: *volWrapper,
+			SymbolsDir:  symbols,
+			CacheDir:    cache,
+			WorkRoot:    filepath.Join(*dir, "analysis"),
+			Plugins:     plugins,
+			CPUs:        *volCPUs,
+			Timeout:     *volTimeout,
+			MaxOutput:   *volMaxOutput,
+		})
+		s.volAuto = *volAuto
+		log.Printf("memory analysis enabled: %d plugins, symbols %s", len(plugins), symbols)
 	}
 	if *cert == "" {
 		// Plain HTTP is the lab default. Bearer tokens travel in clear text,
@@ -137,14 +208,15 @@ func newServerWithPolicy(dir string, hosts []string, allowAny bool, op, ag strin
 		return nil, err
 	}
 	s := &server{
-		dir:           dir,
-		primaryHost:   primaryHost,
-		allowAnyHost:  allowAny,
-		hostIDs:       hostIDs,
-		hosts:         hostRecords,
-		operatorToken: op,
-		agentToken:    ag,
-		jobs:          make(map[string]*protocol.Job),
+		dir:            dir,
+		primaryHost:    primaryHost,
+		allowAnyHost:   allowAny,
+		hostIDs:        hostIDs,
+		hosts:          hostRecords,
+		operatorToken:  op,
+		agentToken:     ag,
+		jobs:           make(map[string]*protocol.Job),
+		maxMemoryImage: maxMemoryImageDefault,
 	}
 	settings, err := ti.LoadSettings(dir)
 	if err != nil {
@@ -188,6 +260,13 @@ func newServerWithPolicy(dir string, hosts []string, allowAny bool, op, ag strin
 				return nil, err
 			}
 		}
+		if job.VolatilityStatus == volatility.StatusRunning {
+			job.VolatilityStatus = volatility.StatusInterrupted
+			job.VolatilityReason = "analysis interrupted by server restart; re-run it from the console"
+			if err := s.save(&job); err != nil {
+				return nil, err
+			}
+		}
 		s.jobs[job.ID] = &job
 	}
 	return s, nil
@@ -211,6 +290,7 @@ func (s *server) routes() http.Handler {
 	m.HandleFunc("POST /v1/blacklist", s.auth(false, s.listPOST(s.blacklist, "blacklist")))
 	m.HandleFunc("DELETE /v1/blacklist/{id}", s.auth(false, s.listDELETE(s.blacklist, "blacklist")))
 	m.HandleFunc("POST /v1/jobs/{id}/ti", s.auth(false, s.tiTriggerPOST))
+	m.HandleFunc("POST /v1/jobs/{id}/volatility", s.auth(false, s.volatilityTriggerPOST))
 	m.HandleFunc("POST /v1/agent/host", s.auth(true, s.agentHost))
 	m.HandleFunc("GET /v1/agent/jobs/next", s.auth(true, s.next))
 	m.HandleFunc("POST /v1/agent/jobs/{id}/artifacts/{artifact}", s.auth(true, s.upload))
@@ -431,10 +511,36 @@ func (s *server) next(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, selected)
 }
 
+// artifactLimit returns the size cap for one artifact kind. memory_image is
+// the only kind above the default 10 MiB; the operator sets its cap with
+// -max-memory-image.
+func (s *server) artifactLimit(kind protocol.Kind) int64 {
+	if kind == protocol.KindMemoryImage {
+		return s.maxMemoryImage
+	}
+	return maxArtifact
+}
+
+// existingArtifact reports whether job already stores a and, if so, whether
+// the attempted upload is byte-identical metadata (an idempotent retry).
+func existingArtifact(job *protocol.Job, a *protocol.Artifact) (found, same bool) {
+	for i := range job.Artifacts {
+		if job.Artifacts[i].ID == a.ID {
+			other := job.Artifacts[i]
+			return true, other.SHA256 == a.SHA256 && other.Source == a.Source && other.Kind == a.Kind
+		}
+	}
+	return false, false
+}
+
+// upload stores one artifact. The body is streamed to a temporary file
+// outside the server lock so a multi-gigabyte memory image does not block
+// polling, heartbeats or the console; the job state is re-checked under the
+// lock before the file is committed.
 func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 	id, aid := r.PathValue("id"), r.PathValue("artifact")
 	var a protocol.Artifact
-	if err := json.Unmarshal([]byte(r.Header.Get("X-Artifact-Metadata")), &a); err != nil || a.ID != aid || len(aid) != 64 || len(a.SHA256) != 64 || a.Size < 0 || a.Size > maxArtifact || a.Source == "" || a.Kind == "" {
+	if err := json.Unmarshal([]byte(r.Header.Get("X-Artifact-Metadata")), &a); err != nil || a.ID != aid || len(aid) != 64 || len(a.SHA256) != 64 || a.Size < 0 || a.Size > s.artifactLimit(a.Kind) || a.Source == "" || a.Kind == "" {
 		http.Error(w, "invalid artifact metadata", 400)
 		return
 	}
@@ -446,32 +552,36 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid hash", 400)
 		return
 	}
+	// Reject obviously wrong jobs before reading a large body.
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	job := s.jobs[id]
 	if job == nil || job.Status != "running" {
+		s.mu.Unlock()
 		http.Error(w, "job not running", 409)
 		return
 	}
 	scenario, ok := protocol.ScenarioByID(job.Scenario)
 	if !ok || !scenario.AcceptsKind(a.Kind) {
+		s.mu.Unlock()
 		http.Error(w, "invalid artifact metadata", 400)
 		return
 	}
-	for _, existing := range job.Artifacts {
-		if existing.ID == aid {
-			if existing.SHA256 == a.SHA256 && existing.Source == a.Source && existing.Kind == a.Kind {
-				w.WriteHeader(200)
-			} else {
-				http.Error(w, "artifact ID conflict", 409)
-			}
-			return
+	if found, same := existingArtifact(job, &a); found {
+		s.mu.Unlock()
+		if same {
+			w.WriteHeader(200)
+		} else {
+			http.Error(w, "artifact ID conflict", 409)
 		}
+		return
 	}
 	if len(job.Artifacts) >= 260 {
+		s.mu.Unlock()
 		http.Error(w, "artifact count limit reached", 413)
 		return
 	}
+	s.mu.Unlock()
+
 	dir := filepath.Join(s.dir, "artifacts", id)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		http.Error(w, "storage failure", 500)
@@ -484,7 +594,7 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.Remove(f.Name())
 	hash := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, hash), http.MaxBytesReader(w, r.Body, maxArtifact+1))
+	n, err := io.Copy(io.MultiWriter(f, hash), http.MaxBytesReader(w, r.Body, s.artifactLimit(a.Kind)+1))
 	if err != nil || n != a.Size || hex.EncodeToString(hash.Sum(nil)) != a.SHA256 {
 		f.Close()
 		http.Error(w, "size or SHA-256 mismatch", 400)
@@ -497,6 +607,28 @@ func (s *server) upload(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := f.Close(); err != nil {
 		http.Error(w, "storage failure", 500)
+		return
+	}
+
+	// The body copy can take minutes: re-check the job, duplicates and the
+	// artifact count before publishing the file.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job = s.jobs[id]
+	if job == nil || job.Status != "running" {
+		http.Error(w, "job not running", 409)
+		return
+	}
+	if found, same := existingArtifact(job, &a); found {
+		if same {
+			w.WriteHeader(200)
+		} else {
+			http.Error(w, "artifact ID conflict", 409)
+		}
+		return
+	}
+	if len(job.Artifacts) >= 260 {
+		http.Error(w, "artifact count limit reached", 413)
 		return
 	}
 	name := filepath.Join(dir, aid)
@@ -552,36 +684,63 @@ func (s *server) result(w http.ResponseWriter, r *http.Request) {
 	if s.settings.Get().VTAutoEnrich {
 		s.tiTriggerLocked(job)
 	}
+	// Completed memory.v1 jobs are analyzed automatically when Volatility is
+	// configured and -vol-auto is on.
+	if s.volAuto {
+		s.volatilityTriggerLocked(job, false)
+	}
 	writeJSON(w, 200, job)
 }
 
+// download streams one artifact. The whole file is hashed and checked against
+// the manifest before any bytes are written, so a corrupt archive is never
+// served; the file and the lock stay out of memory and off the critical path.
 func (s *server) download(w http.ResponseWriter, r *http.Request) {
+	jobID := r.PathValue("id")
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	job := s.jobs[r.PathValue("id")]
-	if job == nil {
+	job := s.jobs[jobID]
+	var artifact protocol.Artifact
+	found := false
+	if job != nil {
+		for i := range job.Artifacts {
+			if job.Artifacts[i].ID == r.PathValue("artifact") {
+				artifact = job.Artifacts[i]
+				found = true
+				break
+			}
+		}
+	}
+	s.mu.Unlock()
+	if !found {
 		http.NotFound(w, r)
 		return
 	}
-	for _, a := range job.Artifacts {
-		if a.ID == r.PathValue("artifact") {
-			name := filepath.Join(s.dir, "artifacts", job.ID, a.ID)
-			data, err := os.ReadFile(name)
-			if err != nil {
-				http.Error(w, "artifact missing", 500)
-				return
-			}
-			hash := sha256.Sum256(data)
-			if int64(len(data)) != a.Size || hex.EncodeToString(hash[:]) != a.SHA256 {
-				http.Error(w, "stored artifact failed integrity check", 500)
-				return
-			}
-			s.audit("download", job.ID, a.ID)
-			w.Header().Set("Content-Type", "application/octet-stream")
-			w.Header().Set("X-SHA256", a.SHA256)
-			_, _ = w.Write(data)
-			return
-		}
+	name := filepath.Join(s.dir, "artifacts", jobID, artifact.ID)
+	f, err := os.Open(name)
+	if err != nil {
+		http.Error(w, "artifact missing", 500)
+		return
 	}
-	http.NotFound(w, r)
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.Size() != artifact.Size {
+		http.Error(w, "stored artifact failed integrity check", 500)
+		return
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, f); err != nil || hex.EncodeToString(hash.Sum(nil)) != artifact.SHA256 {
+		http.Error(w, "stored artifact failed integrity check", 500)
+		return
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		http.Error(w, "artifact missing", 500)
+		return
+	}
+	s.audit("download", jobID, artifact.ID)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("X-SHA256", artifact.SHA256)
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	if _, err := io.Copy(w, f); err != nil {
+		log.Printf("download %s/%s: %v", jobID, artifact.ID, err)
+	}
 }

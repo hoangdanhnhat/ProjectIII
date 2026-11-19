@@ -5,8 +5,9 @@
 //
 // # Subprocess policy
 //
-// This scenario runs the only subprocess in the codebase. The rules, which
-// apply to any future scenario that needs a system command:
+// This scenario runs the first of two subprocesses in the codebase (the
+// second is the operator-supplied memory acquisition binary in memory.v1).
+// The rules, which apply to any future scenario that needs a system command:
 //
 //   - The binary must be a vetted OS component, never something we download
 //     or write to disk at runtime. Here that is wevtutil, resolved via

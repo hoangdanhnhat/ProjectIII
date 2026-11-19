@@ -1,6 +1,13 @@
 import { http, HttpResponse } from "msw";
 import { setupServer } from "msw/node";
 import { HOST_ROLE, JOB, REPORT, SNAPSHOT, TI_SETTINGS } from "./fixtures";
+import {
+  MEMORY_JOB,
+  MEMORY_MANIFEST,
+  VOL_MALFIND_ROWS,
+  VOL_PSLIST_ROWS,
+  VOL_REPORT,
+} from "./memoryFixtures";
 import { HOSTS } from "./hostFixtures";
 
 export const calls: Array<{ method: string; path: string; body: unknown }> = [];
@@ -26,6 +33,10 @@ export const handlers = [
     if (params.artifact === "rep1") return HttpResponse.json(REPORT);
     if (params.artifact === "snap1") return HttpResponse.json(SNAPSHOT);
     if (params.artifact === "role1") return HttpResponse.json(HOST_ROLE);
+    if (params.artifact === "mem-manifest") return HttpResponse.json(MEMORY_MANIFEST);
+    if (params.artifact === "vol-report") return HttpResponse.json(VOL_REPORT);
+    if (params.artifact === "vol-pslist") return HttpResponse.text(VOL_PSLIST_ROWS);
+    if (params.artifact === "vol-malfind") return HttpResponse.text(VOL_MALFIND_ROWS);
     return new HttpResponse(null, { status: 404 });
   }),
 
@@ -99,6 +110,11 @@ export const handlers = [
   http.post("*/v1/jobs/:id/ti", ({ params }) => {
     record("POST", `/v1/jobs/${params.id}/ti`);
     return HttpResponse.json({ ...JOB, ti_status: "running" }, { status: 202 });
+  }),
+
+  http.post("*/v1/jobs/:id/volatility", ({ params }) => {
+    record("POST", `/v1/jobs/${params.id}/volatility`);
+    return HttpResponse.json({ ...MEMORY_JOB, volatility_status: "running" }, { status: 202 });
   }),
 ];
 

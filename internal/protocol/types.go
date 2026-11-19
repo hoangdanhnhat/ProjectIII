@@ -6,6 +6,7 @@ const ScenarioWebshell = "webshell.v1"
 const ScenarioNetstat = "netstat.v1"
 const ScenarioEventlog = "eventlog.v1"
 const ScenarioHostRole = "hostrole.v1"
+const ScenarioMemory = "memory.v1"
 
 type Kind string
 
@@ -17,6 +18,15 @@ const (
 	KindEventLog        Kind = "event_log"
 	KindTIReport        Kind = "ti_report"
 	KindHostRole        Kind = "host_role"
+	// KindMemoryImage is a raw physical-memory image. It is the only kind
+	// allowed to exceed the default 10 MiB artifact limit; the server's
+	// -max-memory-image flag and the agent's -memory-max-bytes flag bound it.
+	KindMemoryImage    Kind = "memory_image"
+	KindMemoryManifest Kind = "memory_manifest"
+	// Server-generated memory analysis artifacts. The agent never uploads
+	// these; they belong to the memory.v1 scenario so a job can carry them.
+	KindVolatilityReport Kind = "volatility_report"
+	KindVolatilityPlugin Kind = "volatility_plugin"
 )
 
 type Job struct {
@@ -32,9 +42,15 @@ type Job struct {
 	// TIStatus/TIReason track the server-side threat-intel enrichment of
 	// netstat.v1 jobs (running -> completed | partial | skipped | failed).
 	// Empty means enrichment has not run.
-	TIStatus  string     `json:"ti_status,omitempty"`
-	TIReason  string     `json:"ti_reason,omitempty"`
-	Artifacts []Artifact `json:"artifacts"`
+	TIStatus string `json:"ti_status,omitempty"`
+	TIReason string `json:"ti_reason,omitempty"`
+	// VolatilityStatus/VolatilityReason track the server-side memory
+	// analysis of memory.v1 jobs. VolatilityImage is the memory_image
+	// artifact the current result was produced from.
+	VolatilityStatus string     `json:"volatility_status,omitempty"`
+	VolatilityReason string     `json:"volatility_reason,omitempty"`
+	VolatilityImage  string     `json:"volatility_image,omitempty"`
+	Artifacts        []Artifact `json:"artifacts"`
 }
 
 type Artifact struct {
